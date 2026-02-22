@@ -1,3 +1,5 @@
+from loguru import logger
+
 from grip.tools.base import Tool, ToolContext, ToolRegistry
 from grip.tools.filesystem import create_filesystem_tools
 from grip.tools.finance import create_finance_tools
@@ -50,12 +52,12 @@ def create_default_registry(
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     new_loop.run_until_complete(mcp_manager.connect_all(mcp_servers, registry))
-                except Exception:
-                    pass  # Silently ignore MCP failures
+                except Exception as exc:
+                    logger.warning("MCP server connection failed: {}", exc)
 
             thread = threading.Thread(target=_load_mcp, daemon=True)
             thread.start()
-        except Exception:
-            pass  # Silently ignore MCP failures - don't break the agent
+        except Exception as exc:
+            logger.warning("Failed to start MCP loading thread: {}", exc)
 
     return registry
