@@ -1,7 +1,7 @@
 """Chat endpoint for the grip REST API.
 
 POST /api/v1/chat — blocking request/response. Sends the user message
-through the agent loop and returns the final response with metrics.
+through the engine and returns the final response with metrics.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from grip.agent.loop import AgentLoop
 from grip.api.auth import require_auth
-from grip.api.dependencies import check_rate_limit, check_token_rate_limit, get_agent_loop
+from grip.api.dependencies import check_rate_limit, check_token_rate_limit, get_engine
+from grip.engines.types import EngineProtocol
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -61,7 +61,7 @@ async def chat(
     body: ChatRequest,
     request: Request,
     token: str = Depends(require_auth),
-    loop: AgentLoop = Depends(get_agent_loop),  # noqa: B008
+    engine: EngineProtocol = Depends(get_engine),  # noqa: B008
 ) -> ChatResponse:
     """Send a message to the agent and get a blocking response."""
     check_token_rate_limit(request, token)
@@ -69,7 +69,7 @@ async def chat(
     session_key = body.session_key or f"api:{uuid.uuid4().hex[:12]}"
 
     try:
-        result = await loop.run(
+        result = await engine.run(
             body.message,
             session_key=session_key,
             model=body.model,
@@ -84,8 +84,8 @@ async def chat(
         response=result.response,
         iterations=result.iterations,
         usage={
-            "prompt_tokens": result.total_usage.prompt_tokens,
-            "completion_tokens": result.total_usage.completion_tokens,
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
         },
         tool_calls_made=result.tool_calls_made,
         session_key=session_key,

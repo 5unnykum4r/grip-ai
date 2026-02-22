@@ -6,7 +6,7 @@ create_api_app() builds a fully wired FastAPI instance with:
   - Sanitized error handlers
   - All route modules mounted
 
-The app stores shared state (agent loop, registries, managers) on app.state
+The app stores shared state (engine, registries, managers) on app.state
 so that FastAPI dependency injection can retrieve them in route handlers.
 """
 
@@ -78,7 +78,7 @@ def create_api_app(config: GripConfig, config_path: Path | None = None) -> FastA
         app.state.config = config
         app.state.config_path = config_path
         app.state.auth_token = auth_token
-        app.state.agent_loop = loop
+        app.state.engine = loop
         app.state.tool_registry = registry
         app.state.session_mgr = session_mgr
         app.state.memory_mgr = memory_mgr

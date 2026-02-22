@@ -1,7 +1,7 @@
 """Cron scheduling service: periodic task execution via cron expressions.
 
 Jobs are stored as JSON in workspace/cron/jobs.json. When a job fires,
-it calls AgentLoop.run() with the job's prompt as the user message.
+it calls EngineProtocol.run() with the job's prompt as the user message.
 
 Uses croniter for cron expression parsing (e.g. "*/5 * * * *" = every 5 min).
 Falls back to interval-based scheduling if croniter is not installed.
@@ -20,6 +20,7 @@ from typing import Any
 from loguru import logger
 
 from grip.config.schema import CronConfig
+from grip.engines.types import EngineProtocol
 
 
 @dataclass(slots=True)
@@ -47,7 +48,7 @@ class CronService:
     """Manages cron job persistence and periodic execution.
 
     On start(), spawns an asyncio loop that checks every 30 seconds
-    whether any job is due. When a job fires, it creates an agent run
+    whether any job is due. When a job fires, it calls engine.run()
     with the job's prompt as the user message. If the job has a reply_to
     session key (e.g. "telegram:12345"), the result is published to
     the message bus so it reaches the originating channel.
@@ -56,13 +57,13 @@ class CronService:
     def __init__(
         self,
         cron_dir: Path,
-        agent_loop: Any,
+        engine: EngineProtocol,
         config: CronConfig,
         bus: Any | None = None,
     ) -> None:
         self._cron_dir = cron_dir
         self._jobs_file = cron_dir / "jobs.json"
-        self._agent_loop = agent_loop
+        self._engine = engine
         self._config = config
         self._bus = bus
         self._jobs: dict[str, CronJob] = {}
@@ -98,7 +99,7 @@ class CronService:
         Args:
             name: Human-readable job name.
             schedule: Cron expression (e.g. "*/5 * * * *").
-            prompt: The prompt to send to the agent loop when the job fires.
+            prompt: The prompt to send to the engine when the job fires.
             reply_to: Session key to route results to (e.g. "telegram:12345").
                       When set, job output is published to the message bus.
 
@@ -217,11 +218,11 @@ class CronService:
         return 3600
 
     async def _execute_job(self, job: CronJob) -> None:
-        """Run a single cron job through the agent loop with a timeout.
+        """Run a single cron job through the engine with a timeout.
 
         If the job has a reply_to session key and a message bus is available,
-        the agent's response is published to the bus so the originating channel
-        (e.g. Telegram) receives the result.
+        the result is published to the bus so the originating channel
+        (e.g. Telegram) receives the response.
         """
         logger.info("Executing cron job: {} ({})", job.name, job.id)
         job.last_run = datetime.now(UTC).isoformat()
@@ -232,7 +233,7 @@ class CronService:
 
         try:
             result = await asyncio.wait_for(
-                self._agent_loop.run(job.prompt, session_key=session_key),
+                self._engine.run(job.prompt, session_key=session_key),
                 timeout=timeout,
             )
             logger.info(

@@ -22,13 +22,13 @@ cron_app = typer.Typer(no_args_is_help=True)
 
 
 def _get_cron_service() -> CronService:
-    """Build a CronService from the current config (read-only, no agent loop)."""
+    """Build a CronService from the current config (read-only, no engine)."""
     from grip.cli.app import state
 
     config = load_config(state.config_path)
     ws_path = config.agents.defaults.workspace.expanduser().resolve()
-    # Pass None as agent_loop — CLI only manages jobs, doesn't execute them
-    return CronService(ws_path / "cron", agent_loop=None, config=config.cron)
+    # Pass None as engine -- CLI only manages jobs, doesn't execute them
+    return CronService(ws_path / "cron", engine=None, config=config.cron)  # type: ignore[arg-type]
 
 
 @cron_app.command(name="list")

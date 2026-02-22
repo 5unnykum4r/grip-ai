@@ -1,7 +1,7 @@
 """Heartbeat service: periodic autonomous agent wake-up.
 
 Reads HEARTBEAT.md from the workspace at a configurable interval and
-sends its contents to the agent loop as a user message. This allows
+sends its contents to the engine as a user message. This allows
 the agent to perform periodic self-directed tasks like checking
 system health, summarizing recent activity, or running maintenance.
 
@@ -12,27 +12,27 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 
 from grip.config.schema import HeartbeatConfig
+from grip.engines.types import EngineProtocol
 
 SESSION_KEY = "heartbeat:periodic"
 
 
 class HeartbeatService:
-    """Periodically reads HEARTBEAT.md and feeds it to the agent loop."""
+    """Periodically reads HEARTBEAT.md and feeds it to the engine."""
 
     def __init__(
         self,
         workspace_root: Path,
-        agent_loop: Any,
+        engine: EngineProtocol,
         config: HeartbeatConfig,
     ) -> None:
         self._workspace_root = workspace_root
         self._heartbeat_file = workspace_root / "HEARTBEAT.md"
-        self._agent_loop = agent_loop
+        self._engine = engine
         self._config = config
         self._running = False
 
@@ -56,7 +56,7 @@ class HeartbeatService:
         logger.debug("Heartbeat service stopped")
 
     async def _beat(self) -> None:
-        """Read HEARTBEAT.md and send to agent if it has content."""
+        """Read HEARTBEAT.md and send to engine if it has content."""
         if not self._heartbeat_file.exists():
             logger.debug("No HEARTBEAT.md found, skipping")
             return
@@ -68,11 +68,11 @@ class HeartbeatService:
 
         logger.info("Heartbeat triggered ({} chars)", len(content))
         try:
-            result = await self._agent_loop.run(content, session_key=SESSION_KEY)
+            result = await self._engine.run(content, session_key=SESSION_KEY)
             logger.info(
                 "Heartbeat completed: {} iterations, {} tokens",
                 result.iterations,
-                result.total_usage.total_tokens,
+                result.total_tokens,
             )
         except Exception as exc:
-            logger.error("Heartbeat agent run failed: {}", exc)
+            logger.error("Heartbeat run failed: {}", exc)
