@@ -24,6 +24,16 @@ from grip.config.schema import ChannelEntry
 
 SLACK_MAX_MESSAGE_LENGTH = 40000
 
+_SLACK_COMMANDS = {
+    "help": "List available commands",
+    "new": "Start a fresh conversation",
+    "status": "Show session info",
+    "model": "Show or switch AI model",
+    "clear": "Clear conversation history",
+    "compact": "Summarize and compress history",
+    "version": "Show grip version",
+}
+
 
 class SlackChannel(BaseChannel):
     """Slack bot channel using Socket Mode (no public URL needed)."""
@@ -82,11 +92,37 @@ class SlackChannel(BaseChannel):
                         )
                         return
 
+                    text = event.get("text", "").strip()
+                    chat_id = event.get("channel", "")
+
+                    if text.startswith(("!", "/")):
+                        parts = text[1:].split(maxsplit=1)
+                        command = parts[0].lower()
+                        arg = parts[1] if len(parts) > 1 else ""
+                        if command in _SLACK_COMMANDS:
+                            cmd_msg = InboundMessage(
+                                channel="slack",
+                                chat_id=chat_id,
+                                user_id=user_id,
+                                text=f"/{command} {arg}".strip(),
+                                metadata={
+                                    "ts": event.get("ts", ""),
+                                    "team": event.get("team", ""),
+                                    "command": command,
+                                    "arg": arg,
+                                },
+                            )
+                            await bus.push_inbound(cmd_msg)
+                            await client.send_socket_mode_response(
+                                {"envelope_id": req.envelope_id}
+                            )
+                            return
+
                     msg = InboundMessage(
                         channel="slack",
-                        chat_id=event.get("channel", ""),
+                        chat_id=chat_id,
                         user_id=user_id,
-                        text=event.get("text", ""),
+                        text=text,
                         metadata={
                             "ts": event.get("ts", ""),
                             "team": event.get("team", ""),
