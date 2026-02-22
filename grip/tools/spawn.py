@@ -173,5 +173,81 @@ class SpawnTool(Tool):
         )
 
 
+class CheckSubagentTool(Tool):
+    """Check the status and result of a previously spawned subagent."""
+
+    def __init__(self, manager: SubagentManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "check_subagent"
+
+    @property
+    def description(self) -> str:
+        return "Check the status and result of a previously spawned subagent by its ID."
+
+    @property
+    def category(self) -> str:
+        return "orchestration"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "ID of the subagent to check.",
+                },
+            },
+            "required": ["agent_id"],
+        }
+
+    async def execute(self, params: dict[str, Any], ctx: ToolContext) -> str:
+        info = self._manager.get(params["agent_id"])
+        if not info:
+            return f"No subagent found with ID '{params['agent_id']}'. Use list_subagents to see all."
+        return (
+            f"ID: {info.id}\n"
+            f"Task: {info.task_description}\n"
+            f"Status: {info.status}\n"
+            f"Result: {info.result or 'Not yet available'}"
+        )
+
+
+class ListSubagentsTool(Tool):
+    """List all spawned subagents and their statuses."""
+
+    def __init__(self, manager: SubagentManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "list_subagents"
+
+    @property
+    def description(self) -> str:
+        return "List all spawned subagents with their IDs, statuses, and task descriptions."
+
+    @property
+    def category(self) -> str:
+        return "orchestration"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, params: dict[str, Any], ctx: ToolContext) -> str:
+        agents = self._manager.list_all()
+        if not agents:
+            return "No subagents have been spawned."
+        lines = []
+        for a in agents:
+            lines.append(f"- {a.id} [{a.status}]: {a.task_description[:80]}")
+        return "\n".join(lines)
+
+
 def create_spawn_tools(manager: SubagentManager | None = None) -> list[Tool]:
-    return [SpawnTool(manager)]
+    mgr = manager or SubagentManager()
+    return [SpawnTool(mgr), CheckSubagentTool(mgr), ListSubagentsTool(mgr)]
