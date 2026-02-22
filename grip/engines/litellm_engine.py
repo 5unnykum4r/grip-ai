@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from grip.agent.loop import AgentLoop
 from grip.agent.loop import AgentRunResult as OldAgentRunResult
-from grip.agent.loop import ToolCallDetail as OldToolCallDetail
 from grip.config.schema import GripConfig
 from grip.engines.types import AgentRunResult, EngineProtocol, ToolCallDetail
 from grip.memory import MemoryManager

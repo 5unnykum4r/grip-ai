@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from grip.config.schema import GripConfig, MCPServerConfig
+from grip.config.schema import GripConfig
 from grip.engines.types import AgentRunResult, EngineProtocol
-
 
 # ---------------------------------------------------------------------------
 # Mock the claude_agent_sdk module before importing SDKRunner, since the real
@@ -197,12 +195,12 @@ class TestSDKRunnerConstructor:
         assert runner._send_file_callback is None
 
     def test_resolves_api_key_from_config(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
-        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         assert os.environ.get("ANTHROPIC_API_KEY") == "test-key-12345"
 
     def test_falls_back_to_env_api_key(self, config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key-67890"}):
-            runner = _build_runner(config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr)
+            _build_runner(config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr)
             assert os.environ.get("ANTHROPIC_API_KEY") == "env-key-67890"
 
     def test_stores_trust_manager(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -375,14 +373,14 @@ class TestBuildCustomTools:
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
         remember_fn = next(fn for fn in tools if fn.__name__ == "remember")
-        result = remember_fn("user likes Python", "preferences")
+        remember_fn("user likes Python", "preferences")
         mock_memory_mgr.append_to_memory.assert_called_once()
 
     def test_recall_tool_calls_memory_search(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
         recall_fn = next(fn for fn in tools if fn.__name__ == "recall")
-        result = recall_fn("Python")
+        recall_fn("Python")
         mock_memory_mgr.search_memory.assert_called_with("Python", max_results=10)
 
     def test_send_message_invokes_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -392,7 +390,7 @@ class TestBuildCustomTools:
 
         tools = runner._build_custom_tools()
         send_fn = next(fn for fn in tools if fn.__name__ == "send_message")
-        result = send_fn("Hello world", "test:session")
+        send_fn("Hello world", "test:session")
         callback.assert_called_once_with("Hello world", "test:session")
 
     def test_send_message_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -409,7 +407,7 @@ class TestBuildCustomTools:
 
         tools = runner._build_custom_tools()
         send_file_fn = next(fn for fn in tools if fn.__name__ == "send_file")
-        result = send_file_fn("/path/to/file.txt", "a caption", "test:session")
+        send_file_fn("/path/to/file.txt", "a caption", "test:session")
         callback.assert_called_once_with("/path/to/file.txt", "a caption", "test:session")
 
     def test_send_file_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -586,10 +584,10 @@ class TestSDKRunnerSkillsInPrompt:
         mock_skill.name = "web_search"
         mock_skill.description = "Search the web for information"
 
-        with patch("grip.engines.sdk_engine.SkillsLoader") as MockLoader:
+        with patch("grip.engines.sdk_engine.SkillsLoader") as mock_loader:
             loader_instance = MagicMock()
             loader_instance.scan.return_value = [mock_skill]
-            MockLoader.return_value = loader_instance
+            mock_loader.return_value = loader_instance
 
             prompt = runner._build_system_prompt("hello", "test:session")
 

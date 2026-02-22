@@ -11,7 +11,6 @@ import pytest
 from grip.config.schema import GripConfig
 from grip.engines.types import AgentRunResult, EngineProtocol, ToolCallDetail
 
-
 # ---------------------------------------------------------------------------
 # Helpers: lightweight fakes for the "old" AgentLoop result types so we can
 # construct them without importing real provider machinery.
@@ -192,7 +191,7 @@ class TestLiteLLMRunnerConstructor:
         ):
             mock_al.return_value = MagicMock(name="loop")
 
-            runner = LiteLLMRunner(
+            LiteLLMRunner(
                 config=config,
                 workspace=mock_workspace,
                 session_mgr=mock_session_mgr,
@@ -225,7 +224,7 @@ class TestLiteLLMRunnerConstructor:
             mock_sc.return_value = fake_cache
             mock_al.return_value = MagicMock(name="loop")
 
-            runner = LiteLLMRunner(
+            LiteLLMRunner(
                 config=config_with_cache,
                 workspace=mock_workspace,
                 session_mgr=mock_session_mgr,

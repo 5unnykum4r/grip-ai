@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from grip.config.schema import AgentDefaults, GripConfig
 
-
 # ---------------------------------------------------------------------------
 # Part A: AgentDefaults engine config fields
 # ---------------------------------------------------------------------------

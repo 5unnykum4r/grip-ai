@@ -749,10 +749,7 @@ def onboard_command() -> None:
                 return onboard_command()
 
     # ── Success panel ──────────────────────────────────────────────────
-    if use_sdk:
-        engine_line = "[dim]Powered by Claude Agent SDK[/dim]\n\n"
-    else:
-        engine_line = ""
+    engine_line = "[dim]Powered by Claude Agent SDK[/dim]\n\n" if use_sdk else ""
 
     console.print()
     console.print(

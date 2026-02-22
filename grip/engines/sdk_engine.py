@@ -11,11 +11,10 @@ agentic looping, and context management to the Claude Agent SDK. Grip handles:
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
-
-from loguru import logger
+from typing import TYPE_CHECKING, Any
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -24,6 +23,7 @@ from claude_agent_sdk import (
     query,
     tool,
 )
+from loguru import logger
 
 from grip.engines.sdk_hooks import (
     build_post_tool_use_hook,
@@ -150,7 +150,7 @@ class SDKRunner(EngineProtocol):
             skills = loader.scan()
             if skills:
                 skill_lines = [f"- **{s.name}**: {s.description}" for s in skills]
-                parts.append(f"## Available Skills\n\n" + "\n".join(skill_lines))
+                parts.append("## Available Skills\n\n" + "\n".join(skill_lines))
         except Exception as exc:
             logger.debug("Failed to load skills for system prompt: {}", exc)
 
@@ -181,11 +181,7 @@ class SDKRunner(EngineProtocol):
         tools: list = []
 
         # Capture references for closures
-        send_cb = self._send_callback
-        send_file_cb = self._send_file_callback
         memory_mgr = self._memory_mgr
-
-        # -- Keep references to self for dynamic callback lookup --
         runner = self
 
         @tool

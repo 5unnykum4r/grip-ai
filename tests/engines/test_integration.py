@@ -9,13 +9,10 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from grip.config.schema import AgentDefaults, AgentsConfig, GripConfig
 from grip.engines.factory import create_engine
 from grip.engines.litellm_engine import LiteLLMRunner
 from grip.engines.types import EngineProtocol
-
 
 # ---------------------------------------------------------------------------
 # Helpers
