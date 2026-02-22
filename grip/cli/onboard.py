@@ -60,7 +60,7 @@ def _print_header() -> None:
     console.print()
     console.print(
         "[bold cyan]Your AI Agent Platform[/bold cyan]\n\n"
-        "• Multi-provider LLM support (OpenAI, Anthropic, Ollama, and more)\n"
+        "• Claude Agent SDK (recommended) + multi-provider LLM support (OpenAI, Anthropic, Ollama, and more)\n"
         "• Tool calling & function execution\n"
         "• Multi-channel integration (Telegram, Discord, Slack)\n"
         "• Cron jobs & scheduled automation\n"
@@ -78,8 +78,14 @@ def _print_step(step: int, total: int, title: str) -> None:
 
 
 def _build_provider_choices() -> list[Choice]:
-    """Build the InquirerPy choice list for provider selection."""
-    choices: list[Choice] = []
+    """Build the InquirerPy choice list for provider selection.
+
+    The Claude Agent SDK option is placed first as the recommended default.
+    Cloud providers from _CLOUD_PROVIDERS follow, then local options at the end.
+    """
+    choices: list[Choice] = [
+        Choice(value="_claude_sdk", name="  Anthropic — Claude Agent SDK (Recommended)"),
+    ]
     for name in _CLOUD_PROVIDERS:
         spec = ProviderRegistry.get_spec(name)
         if spec:
@@ -101,14 +107,21 @@ def _build_local_choices() -> list[Choice]:
 
 
 def _select_provider() -> tuple[str, bool]:
-    """Run the provider selection prompt."""
+    """Run the provider selection prompt.
+
+    Returns (provider_name, is_custom).
+    Special value "_claude_sdk" signals that the Claude Agent SDK path was chosen.
+    """
     choices = _build_provider_choices()
     selected = inquirer.select(  # type: ignore[attr-defined]
         message="Choose your LLM provider:",
         choices=choices,
-        default=choices[0].value,
+        default="_claude_sdk",
         pointer=">",
     ).execute()
+
+    if selected == "_claude_sdk":
+        return "_claude_sdk", False
 
     if selected == "_local_ollama":
         return "ollama", False
@@ -227,6 +240,85 @@ def _auto_test_connection(config: GripConfig, full_model: str) -> bool:
             logger.enable("litellm")
 
 
+_SDK_MODELS = [
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5-20251001",
+]
+
+
+def _auto_test_sdk_connection(api_key: str, model: str) -> bool:
+    """Test Claude Agent SDK connection.
+
+    Tries the SDK first. If the SDK package is not installed, falls back to
+    testing via LiteLLM with the same API key and model to verify the key works.
+    """
+    import os
+
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+
+    console.print("\n")
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Testing SDK connection...", total=None)
+
+        try:
+            try:
+                from claude_agent_sdk import ClaudeAgentOptions, query
+
+                async def _test():
+                    async for _ in query(
+                        prompt="Say 'ready' in one word.",
+                        options=ClaudeAgentOptions(
+                            model=model,
+                            allowed_tools=[],
+                            permission_mode="bypassPermissions",
+                        ),
+                    ):
+                        pass
+
+                asyncio.run(_test())
+                progress.update(task, description="[green]SDK connection OK!", completed=True)
+                return True
+            except ImportError:
+                # SDK not installed -- verify the API key via LiteLLM instead
+                progress.update(task, description="[cyan]SDK not installed, testing key via LiteLLM...")
+                from grip.providers.litellm_provider import LiteLLMProvider
+
+                provider = LiteLLMProvider(
+                    provider_name="Anthropic",
+                    model_prefix="anthropic",
+                    api_key=api_key,
+                    api_base="https://api.anthropic.com/v1",
+                    default_model=model,
+                )
+                asyncio.run(
+                    provider.chat(
+                        [LLMMessage(role="user", content="Say 'ready'")],
+                        model=f"anthropic/{model}",
+                        max_tokens=20,
+                        temperature=0.0,
+                    )
+                )
+                progress.update(task, description="[green]API key verified (SDK will be used at runtime)!", completed=True)
+                return True
+        except Exception as exc:
+            progress.update(task, description="[red]Connection failed!", completed=True)
+            console.print()
+            console.print(
+                Panel(
+                    f"[red]{exc}[/red]",
+                    title="Connection Error",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            return False
+
+
 def _handle_test_failure() -> str:
     """Show retry options after a failed connection test. Returns chosen action."""
     return inquirer.select(
@@ -275,11 +367,63 @@ def onboard_command() -> None:
 
     _ask_linux_user()
 
+    # ── Track which engine the user chose: "claude_sdk" or "litellm" ──
+    use_sdk = False
+    selected_spec = None
+
     console.print()
     _print_step(1, 6, "Choose your LLM provider")
     provider_name, is_custom = _select_provider()
 
-    if is_custom:
+    if provider_name == "_claude_sdk":
+        # ── Claude Agent SDK path ──────────────────────────────────────
+        use_sdk = True
+
+        _print_step(2, 6, "Configure API key")
+        console.print(
+            Panel(
+                "Enter your [bold cyan]Anthropic[/bold cyan] API key\n"
+                "[dim]Environment variable: ANTHROPIC_API_KEY[/dim]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        while True:
+            api_key = inquirer.secret(
+                message="API key:",
+                default="",
+            ).execute()
+            if not api_key.strip():
+                console.print("[red]API key is required. Please enter a valid key.[/red]")
+                continue
+            break
+
+        _print_step(3, 6, "Choose a Claude model")
+        sdk_model_choices = [Choice(value=m, name=m) for m in _SDK_MODELS]
+        sdk_model = inquirer.fuzzy(  # type: ignore[attr-defined]
+            message="Search or select Claude model:",
+            choices=sdk_model_choices,
+            default="claude-sonnet-4-6",
+            pointer=">",
+        ).execute()
+
+        provider_name = "anthropic"
+        full_model = sdk_model
+        bare_model = sdk_model
+        api_base = ""
+
+        console.print()
+        console.print(
+            Panel(
+                "[bold green]✓ Engine:[/bold green] Claude Agent SDK\n"
+                f"[bold green]✓ Model:[/bold green] {sdk_model}",
+                border_style="green",
+                expand=False,
+            )
+        )
+
+    elif is_custom:
+        # ── Custom OpenAI-compatible provider path ─────────────────────
         while True:
             api_base = inquirer.text(
                 message="Enter API base URL:",
@@ -306,7 +450,18 @@ def onboard_command() -> None:
         selected_spec = ProviderRegistry.get_spec("vllm")
         provider_name = "vllm"
         full_model = bare_model
+
+        console.print()
+        console.print(
+            Panel(
+                f"[bold green]✓ Provider:[/bold green] {selected_spec.display_name if selected_spec else provider_name}\n"
+                f"[bold green]✓ Model:[/bold green] {full_model}",
+                border_style="green",
+                expand=False,
+            )
+        )
     else:
+        # ── Standard LiteLLM provider path ─────────────────────────────
         selected_spec = ProviderRegistry.get_spec(provider_name)
         if not selected_spec:
             console.print("[red]Provider not found. Using OpenRouter as default.[/red]")
@@ -391,16 +546,17 @@ def onboard_command() -> None:
 
         full_model = bare_model
 
-    console.print()
-    console.print(
-        Panel(
-            f"[bold green]✓ Provider:[/bold green] {selected_spec.display_name if selected_spec else provider_name}\n"
-            f"[bold green]✓ Model:[/bold green] {full_model}",
-            border_style="green",
-            expand=False,
+        console.print()
+        console.print(
+            Panel(
+                f"[bold green]✓ Provider:[/bold green] {selected_spec.display_name if selected_spec else provider_name}\n"
+                f"[bold green]✓ Model:[/bold green] {full_model}",
+                border_style="green",
+                expand=False,
+            )
         )
-    )
 
+    # ── Step 4: Telegram ───────────────────────────────────────────────
     _print_step(4, 6, "Connect Telegram bot")
     console.print(
         Panel(
@@ -462,6 +618,7 @@ def onboard_command() -> None:
         console.print("  [dim]Skipped. Set up later with:[/dim]")
         console.print("    [cyan]grip config set channels.telegram.enabled true[/cyan]")
 
+    # ── Step 5: File access mode ───────────────────────────────────────
     _print_step(5, 6, "Configure file access mode")
 
     access_mode = inquirer.select(
@@ -492,40 +649,58 @@ def onboard_command() -> None:
         trust_mode=trust_mode,
     )
 
+    # ── Step 6: Save config & workspace ────────────────────────────────
     _print_step(6, 6, "Setting up workspace & saving config")
 
     providers_dict: dict[str, ProviderEntry] = {}
 
-    local_providers = ["ollama", "llamacpp", "lmstudio"]
-    is_local = provider_name in local_providers
-
-    if not is_local and api_key:
-        default_api_base = selected_spec.api_base if selected_spec else ""
-        if api_base and api_base != default_api_base:
-            providers_dict[provider_name] = ProviderEntry(
-                api_key=api_key,
-                api_base=api_base,
-                default_model=bare_model,
-            )
-        else:
-            providers_dict[provider_name] = ProviderEntry(
-                api_key=api_key,
-                default_model=bare_model,
-            )
-    elif not is_local and api_key:
-        providers_dict[provider_name] = ProviderEntry(
-            api_key=api_key,
-            default_model=bare_model,
+    if use_sdk:
+        # Claude Agent SDK configuration
+        providers_dict["anthropic"] = ProviderEntry(api_key=api_key)
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    engine="claude_sdk",
+                    model=sdk_model,
+                    sdk_model=sdk_model,
+                    provider="anthropic",
+                ),
+            ),
+            providers=providers_dict,
+            channels=channels_config,
+            tools=tools_config,
         )
+    else:
+        # LiteLLM configuration (existing behavior)
+        local_providers = ["ollama", "llamacpp", "lmstudio"]
+        is_local = provider_name in local_providers
 
-    config = GripConfig(
-        agents=AgentsConfig(
-            defaults=AgentDefaults(model=full_model, provider=provider_name),
-        ),
-        providers=providers_dict,
-        channels=channels_config,
-        tools=tools_config,
-    )
+        if not is_local and api_key:
+            default_api_base = selected_spec.api_base if selected_spec else ""
+            if api_base and api_base != default_api_base:
+                providers_dict[provider_name] = ProviderEntry(
+                    api_key=api_key,
+                    api_base=api_base,
+                    default_model=bare_model,
+                )
+            else:
+                providers_dict[provider_name] = ProviderEntry(
+                    api_key=api_key,
+                    default_model=bare_model,
+                )
+
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    engine="litellm",
+                    model=full_model,
+                    provider=provider_name,
+                ),
+            ),
+            providers=providers_dict,
+            channels=channels_config,
+            tools=tools_config,
+        )
 
     from grip.cli.app import state
 
@@ -545,13 +720,24 @@ def onboard_command() -> None:
     )
 
     if trust_mode == "trust_all":
-        console.print("  [dim]📂 File access: unrestricted (trust all)[/dim]")
+        console.print("  [dim]File access: unrestricted (trust all)[/dim]")
     elif trust_mode == "workspace_only":
-        console.print("  [dim]📂 File access: workspace only[/dim]")
+        console.print("  [dim]File access: workspace only[/dim]")
     else:
-        console.print("  [dim]📂 File access: prompt before trusting new directories[/dim]")
+        console.print("  [dim]File access: prompt before trusting new directories[/dim]")
 
-    if api_key or (selected_spec and not selected_spec.api_key_env):
+    # ── Connection test ────────────────────────────────────────────────
+    if use_sdk:
+        while True:
+            success = _auto_test_sdk_connection(api_key, sdk_model)
+            if success:
+                break
+            action = _handle_test_failure()
+            if action == "retry":
+                continue
+            else:
+                return onboard_command()
+    elif api_key or (selected_spec and not selected_spec.api_key_env):
         while True:
             success = _auto_test_connection(config, full_model)
             if success:
@@ -562,17 +748,24 @@ def onboard_command() -> None:
             else:
                 return onboard_command()
 
+    # ── Success panel ──────────────────────────────────────────────────
+    if use_sdk:
+        engine_line = "[dim]Powered by Claude Agent SDK[/dim]\n\n"
+    else:
+        engine_line = ""
+
     console.print()
     console.print(
         Panel(
-            "[bold green]🎉 Setup Complete![/bold green]\n\n"
+            f"[bold green]Setup Complete![/bold green]\n\n"
+            f"{engine_line}"
             "Next steps:\n"
             "  [cyan]grip agent[/cyan]          → Start an interactive chat\n"
             "  [cyan]grip agent -m 'hello'[/cyan] → Send a one-shot message\n"
             "  [cyan]grip status[/cyan]         → Check system status\n"
             "  [cyan]grip config show[/cyan]    → View your configuration\n\n"
             "[dim]Run [cyan]grip gateway[/cyan] to start the Telegram bot![/dim]",
-            title="✨ All Done!",
+            title="All Done!",
             border_style="green",
             expand=False,
         )
