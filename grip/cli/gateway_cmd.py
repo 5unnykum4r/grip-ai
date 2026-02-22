@@ -1,11 +1,11 @@
-"""grip gateway — run the full agent platform with channels, cron, heartbeat, and API.
+"""grip gateway -- run the full agent platform with channels, cron, heartbeat, and API.
 
 The gateway is the long-running process that connects:
   - REST API server (FastAPI + uvicorn)
   - Chat channels (Telegram, Discord, Slack) via the message bus
   - Cron scheduler for periodic tasks
   - Heartbeat service for autonomous check-ins
-  - Agent loop for processing all inbound messages
+  - Engine (LiteLLM or Claude SDK) for processing all inbound messages
 
 Start: grip gateway
 Stop:  Ctrl+C (SIGINT) or SIGTERM for graceful shutdown
@@ -21,17 +21,16 @@ import typer
 from loguru import logger
 from rich.console import Console
 
-from grip.agent.loop import AgentLoop
 from grip.bus.events import InboundMessage, OutboundMessage
 from grip.bus.queue import MessageBus
 from grip.channels.manager import ChannelManager
 from grip.config import GripConfig, load_config
 from grip.cron.service import CronService
+from grip.engines.factory import create_engine
+from grip.engines.types import EngineProtocol
 from grip.heartbeat.service import HeartbeatService
 from grip.memory import MemoryManager
-from grip.providers.registry import create_provider
 from grip.session import SessionManager
-from grip.tools import create_default_registry
 from grip.tools.message import MessageTool, SendFileTool
 from grip.trust import TrustManager
 from grip.workspace import WorkspaceManager
@@ -43,7 +42,7 @@ def gateway_command(
     host: str = typer.Option(None, "--host", "-H", help="Bind address (overrides config)."),  # noqa: B008
     port: int = typer.Option(None, "--port", "-p", help="Bind port (overrides config)."),  # noqa: B008
 ) -> None:
-    """Start the grip gateway: channels + agent loop + cron + heartbeat."""
+    """Start the grip gateway: channels + engine + cron + heartbeat."""
     from grip.cli.app import state
 
     config = load_config(state.config_path)
@@ -64,25 +63,17 @@ async def _run_gateway(config: GripConfig, host: str | None = None, port: int | 
     if not ws.is_initialized:
         ws.initialize()
 
-    provider = create_provider(config)
-    registry = create_default_registry(mcp_servers=config.tools.mcp_servers)
     session_mgr = SessionManager(ws.root / "sessions")
     memory_mgr = MemoryManager(ws.root)
     trust_mgr = TrustManager(ws.root / "state")
 
-    loop = AgentLoop(
-        config,
-        provider,
-        ws,
-        tool_registry=registry,
-        session_manager=session_mgr,
-        memory_manager=memory_mgr,
-        trust_manager=trust_mgr,
-    )
+    # Create the engine via the factory (reads config.agents.defaults.engine
+    # to pick SDKRunner or LiteLLMRunner automatically)
+    engine = create_engine(config, ws, session_mgr, memory_mgr, trust_mgr=trust_mgr)
 
-    # Wire the MessageTool callback to publish outbound messages
+    # Wire outbound messaging based on engine type
     bus = MessageBus()
-    _wire_message_tool(registry, bus)
+    _wire_engine_messaging(engine, bus)
 
     # Start channels
     channel_mgr = ChannelManager(config.channels)
@@ -94,14 +85,16 @@ async def _run_gateway(config: GripConfig, host: str | None = None, port: int | 
             "[yellow]No channels enabled. Gateway will only process internal events.[/yellow]"
         )
 
-    # Start cron and heartbeat (cron gets bus access for result delivery)
-    cron_svc = CronService(ws.root / "cron", loop, config.cron, bus=bus)
-    heartbeat_svc = HeartbeatService(ws.root, loop, config.heartbeat)
+    # Start cron and heartbeat (cron gets bus access for result delivery).
+    # Both services accept Any for their agent_loop parameter and only call
+    # .run() on it, which EngineProtocol satisfies.
+    cron_svc = CronService(ws.root / "cron", engine, config.cron, bus=bus)
+    heartbeat_svc = HeartbeatService(ws.root, engine, config.heartbeat)
 
     if config.heartbeat.enabled and config.heartbeat.interval_minutes < 10:
         console.print(
             f"[yellow]Warning:[/yellow] Heartbeat interval is {config.heartbeat.interval_minutes} minutes. "
-            "Each heartbeat triggers a full agent loop run consuming tokens. "
+            "Each heartbeat triggers a full agent run consuming tokens. "
             "Consider increasing the interval to reduce costs."
         )
 
@@ -110,7 +103,7 @@ async def _run_gateway(config: GripConfig, host: str | None = None, port: int | 
 
     # Start REST API server if fastapi+uvicorn are installed
     api_task: asyncio.Task | None = None
-    api_task = _start_api_server(config, loop, registry, session_mgr, memory_mgr, ws, cron_svc)
+    api_task = _start_api_server(config, engine, session_mgr, memory_mgr, ws, cron_svc)
 
     console.print("[bold cyan]grip gateway running.[/bold cyan] Press Ctrl+C to stop.")
 
@@ -120,7 +113,7 @@ async def _run_gateway(config: GripConfig, host: str | None = None, port: int | 
 
     # Run the inbound message consumer alongside shutdown watcher
     consumer_task = asyncio.create_task(
-        _consume_inbound(bus, loop, session_mgr, memory_mgr, config, trust_mgr),
+        _consume_inbound(bus, engine, session_mgr, memory_mgr, config, trust_mgr),
         name="inbound-consumer",
     )
 
@@ -150,7 +143,7 @@ async def _run_gateway(config: GripConfig, host: str | None = None, port: int | 
 
 async def _consume_inbound(
     bus: MessageBus,
-    loop: AgentLoop,
+    engine: EngineProtocol,
     session_mgr: SessionManager,
     memory_mgr: MemoryManager,
     config: GripConfig,
@@ -159,7 +152,7 @@ async def _consume_inbound(
     """Continuously pop inbound messages from the bus and process them.
 
     Handles control commands (/new, /clear, /compact, /undo, /model, /status, /trust)
-    from channel bot handlers, and forwards normal messages to the agent loop.
+    from channel bot handlers, and forwards normal messages to the engine.
     """
     # Per-session model overrides set via /model command
     session_models: dict[str, str] = {}
@@ -210,7 +203,9 @@ async def _consume_inbound(
                 ))
                 continue
             try:
-                await loop.consolidate_session(session)
+                await engine.consolidate_session(session_key)
+                # Re-fetch the session to get the updated message count
+                session = session_mgr.get_or_create(session_key)
                 await bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
                     text=f"Session compacted. {session.message_count} messages remain.",
@@ -296,10 +291,10 @@ async def _consume_inbound(
                 ))
             continue
 
-        # Normal message — run through the agent loop
+        # Normal message -- run through the engine
         model_override = session_models.get(session_key)
         try:
-            result = await loop.run(
+            result = await engine.run(
                 msg.text, session_key=session_key, model=model_override,
             )
             outbound = OutboundMessage(
@@ -323,8 +318,43 @@ async def _consume_inbound(
             await bus.publish_outbound(error_msg)
 
 
+def _wire_engine_messaging(engine: EngineProtocol, bus: MessageBus) -> None:
+    """Connect outbound messaging to the engine based on its concrete type.
+
+    LiteLLMRunner exposes a .registry with MessageTool/SendFileTool that need
+    their callbacks wired to the bus. SDKRunner uses set_send_callback() and
+    set_send_file_callback() to receive async callables directly.
+    """
+    from grip.engines.litellm_engine import LiteLLMRunner
+    from grip.engines.sdk_engine import SDKRunner
+
+    if isinstance(engine, LiteLLMRunner):
+        _wire_message_tool(engine.registry, bus)
+    elif isinstance(engine, SDKRunner):
+        async def _send_via_bus(session_key: str, text: str) -> None:
+            parts = session_key.split(":", 1)
+            channel = parts[0] if len(parts) > 1 else "cli"
+            chat_id = parts[1] if len(parts) > 1 else session_key
+            await bus.publish_outbound(OutboundMessage(channel=channel, chat_id=chat_id, text=text))
+
+        async def _send_file_via_bus(session_key: str, file_path: str, caption: str) -> None:
+            parts = session_key.split(":", 1)
+            channel = parts[0] if len(parts) > 1 else "cli"
+            chat_id = parts[1] if len(parts) > 1 else session_key
+            await bus.publish_outbound(OutboundMessage(
+                channel=channel, chat_id=chat_id, text=caption, file_path=file_path,
+            ))
+
+        engine.set_send_callback(_send_via_bus)
+        engine.set_send_file_callback(_send_file_via_bus)
+
+
 def _wire_message_tool(registry, bus: MessageBus) -> None:
-    """Connect the send_message and send_file tools to the outbound message bus."""
+    """Connect the send_message and send_file tools to the outbound message bus.
+
+    Used by LiteLLMRunner which exposes a ToolRegistry with MessageTool and
+    SendFileTool instances that accept async callbacks.
+    """
     tool = registry.get("send_message")
     if isinstance(tool, MessageTool):
 
@@ -352,8 +382,7 @@ def _wire_message_tool(registry, bus: MessageBus) -> None:
 
 def _start_api_server(
     config: GripConfig,
-    agent_loop: AgentLoop,
-    registry,
+    engine: EngineProtocol,
     session_mgr: SessionManager,
     memory_mgr: MemoryManager,
     workspace: WorkspaceManager,
@@ -361,8 +390,9 @@ def _start_api_server(
 ) -> asyncio.Task | None:
     """Start the REST API as a background asyncio task if dependencies are installed.
 
-    Shares the same AgentLoop, registry, and managers with the gateway
-    so channels and API operate on the same state.
+    Shares the same engine and managers with the gateway so channels and API
+    operate on the same state. Sets app.state.engine for API routers, and
+    app.state.tool_registry from the LiteLLMRunner registry (or None for SDKRunner).
     """
     from grip.api import is_available
 
@@ -400,8 +430,10 @@ def _start_api_server(
     # Populate app.state with shared gateway objects
     app.state.config = config
     app.state.auth_token = auth_token
-    app.state.agent_loop = agent_loop
-    app.state.tool_registry = registry
+    app.state.engine = engine
+    # tool_registry is available on LiteLLMRunner; SDKRunner does not
+    # expose one, so fall back to None
+    app.state.tool_registry = getattr(engine, "registry", None)
     app.state.session_mgr = session_mgr
     app.state.memory_mgr = memory_mgr
     app.state.cron_service = cron_svc
