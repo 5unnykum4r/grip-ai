@@ -1,10 +1,16 @@
 from loguru import logger
 
 from grip.tools.base import Tool, ToolContext, ToolRegistry
+from grip.tools.code_analysis import create_code_analysis_tools
+from grip.tools.data_transform import create_data_transform_tools
+from grip.tools.document_gen import create_document_gen_tools
+from grip.tools.email_compose import create_email_compose_tools
 from grip.tools.filesystem import create_filesystem_tools
 from grip.tools.finance import create_finance_tools
 from grip.tools.mcp import MCPManager
 from grip.tools.message import create_message_tools
+from grip.tools.research import create_research_tools
+from grip.tools.scheduler import create_scheduler_tools
 from grip.tools.shell import create_shell_tools
 from grip.tools.spawn import SubagentManager, create_spawn_tools
 from grip.tools.web import create_web_tools
@@ -14,9 +20,15 @@ __all__ = [
     "ToolContext",
     "ToolRegistry",
     "SubagentManager",
+    "create_code_analysis_tools",
+    "create_data_transform_tools",
+    "create_document_gen_tools",
+    "create_email_compose_tools",
     "create_filesystem_tools",
     "create_finance_tools",
     "create_message_tools",
+    "create_research_tools",
+    "create_scheduler_tools",
     "create_shell_tools",
     "create_spawn_tools",
     "create_web_tools",
@@ -40,6 +52,12 @@ def create_default_registry(
     registry.register_many(create_message_tools(message_callback))
     registry.register_many(create_spawn_tools(subagent_manager))
     registry.register_many(create_finance_tools())
+    registry.register_many(create_research_tools())
+    registry.register_many(create_code_analysis_tools())
+    registry.register_many(create_data_transform_tools())
+    registry.register_many(create_document_gen_tools())
+    registry.register_many(create_email_compose_tools())
+    registry.register_many(create_scheduler_tools())
 
     if mcp_servers:
         mcp_manager = MCPManager()
