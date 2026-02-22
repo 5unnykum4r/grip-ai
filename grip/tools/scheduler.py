@@ -113,10 +113,7 @@ class SchedulerTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Create, list, or delete scheduled tasks using natural language or cron expressions. "
-            "Examples: 'every 5 minutes', 'every day at 9am', 'every Monday at 3pm'."
-        )
+        return "Manage scheduled tasks with natural language ('every day at 9am') or cron expressions."
 
     @property
     def category(self) -> str:
@@ -144,6 +141,10 @@ class SchedulerTool(Tool):
                     "type": "string",
                     "description": "Command or message to execute on schedule (for create action).",
                 },
+                "reply_to": {
+                    "type": "string",
+                    "description": "Session key to deliver results to (e.g. 'telegram:12345'). Required for channel delivery.",
+                },
                 "task_id": {
                     "type": "string",
                     "description": "Task ID to delete (for delete action).",
@@ -170,6 +171,7 @@ class SchedulerTool(Tool):
         schedule = params.get("schedule", "")
         task_name = params.get("task_name", "Unnamed task")
         command = params.get("command", "")
+        reply_to = params.get("reply_to", "")
 
         if not schedule:
             return "Error: schedule is required for create action."
@@ -183,7 +185,7 @@ class SchedulerTool(Tool):
             )
 
         task_id = uuid.uuid4().hex[:8]
-        entry = {
+        entry: dict[str, Any] = {
             "id": task_id,
             "name": task_name,
             "cron": cron_expr,
@@ -191,11 +193,13 @@ class SchedulerTool(Tool):
             "created_at": datetime.now(UTC).isoformat(),
             "original_schedule": schedule,
         }
+        if reply_to:
+            entry["reply_to"] = reply_to
 
         task_file = cron_dir / f"{task_id}.json"
         task_file.write_text(json.dumps(entry, indent=2), encoding="utf-8")
 
-        return (
+        result = (
             f"Scheduled task created:\n"
             f"  ID: {task_id}\n"
             f"  Name: {task_name}\n"
@@ -203,6 +207,9 @@ class SchedulerTool(Tool):
             f"  Schedule: {schedule}\n"
             f"  Command: {command}"
         )
+        if reply_to:
+            result += f"\n  Reply to: {reply_to}"
+        return result
 
     def _list(self, cron_dir: Path) -> str:
         task_files = sorted(cron_dir.glob("*.json"))

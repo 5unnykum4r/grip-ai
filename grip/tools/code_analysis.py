@@ -186,11 +186,7 @@ class CodeAnalysisTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Analyze Python files using AST-based static analysis. "
-            "Supports complexity (cyclomatic per function), dependencies (import graph), "
-            "and structure (counts, nesting depth, size distribution)."
-        )
+        return "AST-based Python analysis: cyclomatic complexity, import graph, and code structure."
 
     @property
     def category(self) -> str:

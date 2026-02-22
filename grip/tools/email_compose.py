@@ -91,11 +91,7 @@ class EmailComposeTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Compose an email draft with tone-aware formatting. "
-            "Tones: formal, friendly, urgent, apologetic, followup. "
-            "Saves draft to workspace drafts/ directory (does NOT send)."
-        )
+        return "Compose a tone-aware email draft (formal/friendly/urgent/apologetic/followup). Does NOT send."
 
     @property
     def category(self) -> str:

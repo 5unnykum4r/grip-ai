@@ -618,11 +618,7 @@ class SaveFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Save content to the organized Downloads folder "
-            "(Downloads/YYYY-MM-DD/filename). Use this instead of write_file "
-            "when saving generated outputs, reports, exports, or downloaded content."
-        )
+        return "Save content to Downloads/YYYY-MM-DD/filename. Use for generated outputs, reports, and exports."
 
     @property
     def parameters(self) -> dict[str, Any]:

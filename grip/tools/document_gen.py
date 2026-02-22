@@ -131,10 +131,7 @@ class DocumentGenTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Generate documents from built-in templates (report, readme, changelog, "
-            "meeting_notes, custom). Supports variable substitution and markdown/html output."
-        )
+        return "Generate documents from templates (report, readme, changelog, meeting_notes, custom)."
 
     @property
     def category(self) -> str:

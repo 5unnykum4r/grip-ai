@@ -111,29 +111,73 @@ async def _fetch_url_text(url: str) -> str:
         return ""
 
 
+_SOURCE_PRIORITY = {
+    "docs.": 5, "github.com": 4, "developer.": 4, "api.": 4,
+    "stackoverflow.com": 3, "mozilla.org": 4, ".gov": 4,
+    "medium.com": 2, "dev.to": 2, "reddit.com": 2,
+}
+
+
+def _score_source_quality(url: str) -> tuple[int, str]:
+    """Rate a URL's trustworthiness and return (score 1-5, label).
+
+    Prefers official docs and primary sources over aggregators.
+    """
+    from urllib.parse import urlparse
+
+    domain = urlparse(url).netloc.lower()
+    for pattern, score in _SOURCE_PRIORITY.items():
+        if pattern in domain:
+            if score >= 4:
+                return score, "PRIMARY"
+            return score, "SECONDARY"
+    return 2, "UNVERIFIED"
+
+
+def _assess_confidence(sources: list[dict[str, str]], contents: list[str]) -> str:
+    """Assess overall research confidence based on source count and quality.
+
+    Returns: HIGH, MEDIUM, or LOW with a short explanation.
+    """
+    valid_count = sum(1 for c in contents if c.strip())
+    quality_scores = [_score_source_quality(s.get("url", ""))[0] for s in sources]
+    avg_quality = sum(quality_scores) / max(len(quality_scores), 1)
+
+    if valid_count >= 3 and avg_quality >= 3.5:
+        return "HIGH — Multiple authoritative sources agree"
+    if valid_count >= 2 or avg_quality >= 3.0:
+        return "MEDIUM — Limited sources or mixed authority"
+    return "LOW — Few sources or only unofficial references"
+
+
 def _build_cited_summary(topic: str, sources: list[dict[str, str]], contents: list[str]) -> str:
-    """Format a research summary with numbered citations [1], [2], etc."""
+    """Format a research summary with numbered citations, source quality, and confidence."""
     lines: list[str] = [f"# Research: {topic}\n"]
 
     lines.append("## Key Findings\n")
     for i, (source, content) in enumerate(zip(sources, contents), 1):
         title = source.get("title", source.get("url", "Source"))
         snippet = source.get("snippet", "")
+        _, quality_label = _score_source_quality(source.get("url", ""))
         if content:
             preview = content[:500]
-            lines.append(f"**[{i}] {title}**")
+            lines.append(f"**[{i}] {title}** ({quality_label})")
             lines.append(f"{preview}...")
             lines.append("")
         elif snippet:
-            lines.append(f"**[{i}] {title}**")
+            lines.append(f"**[{i}] {title}** ({quality_label})")
             lines.append(snippet)
             lines.append("")
+
+    confidence = _assess_confidence(sources, contents)
+    lines.append(f"## Confidence: {confidence}\n")
 
     lines.append("## Sources\n")
     for i, source in enumerate(sources, 1):
         url = source.get("url", "")
         title = source.get("title", url)
-        lines.append(f"[{i}] {title} — {url}")
+        _, quality_label = _score_source_quality(url)
+        lines.append(f"[{i}] [{quality_label}] {title} — {url}")
 
     return "\n".join(lines)
 
@@ -147,10 +191,7 @@ class WebResearchTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Perform multi-step web research on a topic. Decomposes the topic into "
-            "sub-queries, searches and fetches top results, then builds a cited summary."
-        )
+        return "Multi-step web research: decompose topic, search, fetch, and build a cited summary."
 
     @property
     def category(self) -> str:

@@ -124,11 +124,7 @@ class SpawnTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Spawn a background subagent to handle a task asynchronously. "
-            "The subagent runs independently and reports results via send_message. "
-            "Use for long-running tasks or parallel work."
-        )
+        return "Spawn a background subagent for a task. Use for long-running or parallel work."
 
     @property
     def parameters(self) -> dict[str, Any]:

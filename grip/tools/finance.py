@@ -41,10 +41,7 @@ class StockQuoteTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Get real-time stock quote: current price, day range, 52-week range, "
-            "volume, market cap, and P/E ratio. Accepts one ticker or comma-separated list."
-        )
+        return "Get real-time stock quote (price, range, volume, P/E). Accepts comma-separated tickers."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -138,10 +135,7 @@ class StockHistoryTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Get historical OHLCV (Open, High, Low, Close, Volume) data for a stock or crypto. "
-            "Returns a table for the specified period and interval."
-        )
+        return "Get historical OHLCV data for a stock or crypto over a specified period."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -235,8 +229,7 @@ class CompanyInfoTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Get company fundamentals: sector, industry, market cap, revenue, "
-            "dividend yield, analyst recommendation, and business description."
+            "Get company fundamentals: sector, market cap, revenue, dividend, and analyst target."
         )
 
     @property

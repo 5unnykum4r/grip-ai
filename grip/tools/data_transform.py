@@ -190,11 +190,7 @@ class DataTransformTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Transform structured data (CSV, JSON, YAML). Supports operations: "
-            "convert (format conversion), filter (row filtering), select (column picking), "
-            "sort (ordering), aggregate (group-by with count/sum/avg/min/max)."
-        )
+        return "Transform CSV/JSON/YAML data: convert, filter, select, sort, and aggregate."
 
     @property
     def category(self) -> str:

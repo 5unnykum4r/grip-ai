@@ -89,10 +89,7 @@ class ShellTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Execute a shell command and return its stdout and stderr. "
-            "Use for system operations, running scripts, git commands, etc."
-        )
+        return "Execute a shell command and return stdout/stderr."
 
     @property
     def parameters(self) -> dict[str, Any]:
