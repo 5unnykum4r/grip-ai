@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from grip.config.schema import AgentDefaults, GripConfig
+from grip.engines.learning import LearningEngine
 
 # ---------------------------------------------------------------------------
 # Part A: AgentDefaults engine config fields
@@ -147,9 +148,9 @@ _PATCH_AGENT_LOOP = "grip.engines.litellm_engine.AgentLoop"
 
 
 class TestCreateEngineWithLiteLLM:
-    """create_engine() with engine='litellm' returns a LiteLLMRunner."""
+    """create_engine() with engine='litellm' returns a LearningEngine wrapping LiteLLMRunner."""
 
-    def test_returns_litellm_runner(
+    def test_returns_learning_engine_wrapping_litellm(
         self, litellm_config, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
         from grip.engines.factory import create_engine
@@ -164,7 +165,8 @@ class TestCreateEngineWithLiteLLM:
                 litellm_config, mock_workspace, mock_session_mgr, mock_memory_mgr
             )
 
-        assert isinstance(engine, LiteLLMRunner)
+        assert isinstance(engine, LearningEngine)
+        assert isinstance(engine._inner, LiteLLMRunner)
 
 
 class TestCreateEngineSdkFallback:
@@ -187,8 +189,7 @@ class TestCreateEngineSdkFallback:
             patch(_PATCH_CREATE_REGISTRY, return_value=MagicMock()),
             patch(_PATCH_AGENT_LOOP, return_value=MagicMock()),
         ):
-            engine = create_engine(
-                sdk_config, mock_workspace, mock_session_mgr, mock_memory_mgr
-            )
+            engine = create_engine(sdk_config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
-        assert isinstance(engine, LiteLLMRunner)
+        assert isinstance(engine, LearningEngine)
+        assert isinstance(engine._inner, LiteLLMRunner)

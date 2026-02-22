@@ -11,12 +11,14 @@ from unittest.mock import MagicMock, patch
 
 from grip.config.schema import AgentDefaults, AgentsConfig, GripConfig
 from grip.engines.factory import create_engine
+from grip.engines.learning import LearningEngine
 from grip.engines.litellm_engine import LiteLLMRunner
 from grip.engines.types import EngineProtocol
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(engine: str = "litellm") -> GripConfig:
     return GripConfig(agents=AgentsConfig(defaults=AgentDefaults(engine=engine)))
@@ -35,28 +37,36 @@ def _mock_workspace():
 # Factory creates LiteLLMRunner for litellm config
 # ===================================================================
 
+
 class TestFactoryCreatesLiteLLM:
-    def test_creates_litellm_runner(self):
+    def test_creates_learning_engine_wrapping_litellm(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
-        assert isinstance(engine, LiteLLMRunner)
+        assert isinstance(engine, LearningEngine)
+        assert isinstance(engine._inner, LiteLLMRunner)
 
     def test_litellm_runner_is_engine_protocol(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
         assert isinstance(engine, EngineProtocol)
 
     def test_litellm_runner_has_run_method(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
         assert hasattr(engine, "run")
         assert callable(engine.run)
@@ -64,16 +74,20 @@ class TestFactoryCreatesLiteLLM:
     def test_litellm_runner_has_consolidate_session(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
         assert hasattr(engine, "consolidate_session")
 
     def test_litellm_runner_has_reset_session(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
         assert hasattr(engine, "reset_session")
 
@@ -82,24 +96,30 @@ class TestFactoryCreatesLiteLLM:
 # Factory falls back to LiteLLM when SDK is not installed
 # ===================================================================
 
+
 class TestFactoryFallback:
     def test_falls_back_to_litellm_when_sdk_not_installed(self):
         config = _make_config("claude_sdk")
         ws = _mock_workspace()
 
-        with patch.dict(sys.modules, {"claude_agent_sdk": None}), \
-             patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch.dict(sys.modules, {"claude_agent_sdk": None}),
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
-        assert isinstance(engine, LiteLLMRunner)
+        assert isinstance(engine, LearningEngine)
+        assert isinstance(engine._inner, LiteLLMRunner)
 
     def test_fallback_engine_is_still_engine_protocol(self):
         config = _make_config("claude_sdk")
         ws = _mock_workspace()
 
-        with patch.dict(sys.modules, {"claude_agent_sdk": None}), \
-             patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch.dict(sys.modules, {"claude_agent_sdk": None}),
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock())
         assert isinstance(engine, EngineProtocol)
 
@@ -107,6 +127,7 @@ class TestFactoryFallback:
 # ===================================================================
 # Config validation
 # ===================================================================
+
 
 class TestConfigValidation:
     def test_default_engine_is_claude_sdk(self):
@@ -134,21 +155,26 @@ class TestConfigValidation:
 # Trust manager integration with factory
 # ===================================================================
 
+
 class TestTrustManagerWiring:
     def test_trust_mgr_passed_to_litellm_engine(self):
         config = _make_config("litellm")
         ws = _mock_workspace()
         trust = MagicMock()
 
-        with patch("grip.engines.litellm_engine.create_provider"), \
-             patch("grip.engines.litellm_engine.create_default_registry"):
+        with (
+            patch("grip.engines.litellm_engine.create_provider"),
+            patch("grip.engines.litellm_engine.create_default_registry"),
+        ):
             engine = create_engine(config, ws, MagicMock(), MagicMock(), trust_mgr=trust)
-        assert isinstance(engine, LiteLLMRunner)
+        assert isinstance(engine, LearningEngine)
+        assert isinstance(engine._inner, LiteLLMRunner)
 
 
 # ===================================================================
 # API app uses engine factory (not direct AgentLoop)
 # ===================================================================
+
 
 class TestAPIEngineWiring:
     def test_api_app_does_not_instantiate_agent_loop_directly(self):

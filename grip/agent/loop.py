@@ -100,6 +100,7 @@ class AgentLoop:
         memory_manager: MemoryManager | None = None,
         semantic_cache: SemanticCache | None = None,
         trust_manager: Any | None = None,
+        knowledge_base: Any | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
@@ -110,6 +111,7 @@ class AgentLoop:
         self._memory_mgr = memory_manager
         self._semantic_cache = semantic_cache
         self._trust_manager = trust_manager
+        self._kb = knowledge_base
 
         # Phase 2 compat: manual tool definitions + executor
         self._tool_definitions: list[dict[str, Any]] = []
@@ -222,26 +224,7 @@ class AgentLoop:
 
         tool_defs = self._get_tool_definitions()
 
-        from grip.skills.loader import SkillsLoader
-        from grip.tools.docs import generate_tools_md
-
-        skill_loader = SkillsLoader(self._workspace.root)
-        skills = skill_loader.scan()
-        skill_names = [s.name for s in skills]
-
-        # Regenerate TOOLS.md on every run so newly installed skills and
-        # dynamically registered tools are visible to the LLM immediately.
-        tools_md = generate_tools_md(
-            self._registry or ToolRegistry(),
-            skills,
-            self._config.tools.mcp_servers,
-        )
-        (self._workspace.root / "TOOLS.md").write_text(tools_md, encoding="utf-8")
-
         system_msg = self._context_builder.build_system_message(
-            tool_definitions=tool_defs,
-            tool_registry=self._registry,
-            skill_names=skill_names,
             user_message=user_message,
             session_key=session_key,
         )
@@ -250,10 +233,12 @@ class AgentLoop:
 
         # Inject consolidated summary from previous conversations
         if session_summary:
-            messages.append(LLMMessage(
-                role="system",
-                content=session_summary,
-            ))
+            messages.append(
+                LLMMessage(
+                    role="system",
+                    content=session_summary,
+                )
+            )
 
         # Infinite context: retrieve relevant facts from long-term memory
         # based on the current query. Injects targeted historical knowledge
@@ -261,10 +246,12 @@ class AgentLoop:
         if self._memory_mgr:
             relevant_context = self._retrieve_relevant_context(user_message)
             if relevant_context:
-                messages.append(LLMMessage(
-                    role="system",
-                    content=relevant_context,
-                ))
+                messages.append(
+                    LLMMessage(
+                        role="system",
+                        content=relevant_context,
+                    )
+                )
 
         messages.extend(history)
         messages.append(LLMMessage(role="user", content=user_message))
@@ -337,12 +324,14 @@ class AgentLoop:
             failed_tools: list[str] = []
             for exec_result in exec_results:
                 all_tool_calls.append(exec_result.tool_name)
-                all_tool_details.append(ToolCallDetail(
-                    name=exec_result.tool_name,
-                    success=exec_result.success,
-                    duration_ms=exec_result.duration_ms,
-                    output_preview=exec_result.output[:120],
-                ))
+                all_tool_details.append(
+                    ToolCallDetail(
+                        name=exec_result.tool_name,
+                        success=exec_result.success,
+                        duration_ms=exec_result.duration_ms,
+                        output_preview=exec_result.output[:120],
+                    )
+                )
                 messages.append(
                     LLMMessage(
                         role="tool",
@@ -357,14 +346,16 @@ class AgentLoop:
             # Self-correction: if tools failed, inject a reflection nudge
             if failed_tools and defaults.enable_self_correction:
                 failure_summary = "; ".join(failed_tools)
-                messages.append(LLMMessage(
-                    role="system",
-                    content=(
-                        f"[Self-correction] The following tool calls failed: {failure_summary}. "
-                        "Before proceeding, analyze what went wrong and adjust your approach. "
-                        "Consider: wrong arguments, missing prerequisites, or alternative tools."
-                    ),
-                ))
+                messages.append(
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            f"[Self-correction] The following tool calls failed: {failure_summary}. "
+                            "Before proceeding, analyze what went wrong and adjust your approach. "
+                            "Consider: wrong arguments, missing prerequisites, or alternative tools."
+                        ),
+                    )
+                )
 
         # Exhausted max iterations — force a final text response
         logger.warning(
@@ -387,7 +378,9 @@ class AgentLoop:
         total_prompt_tokens += response.usage.prompt_tokens
         total_completion_tokens += response.usage.completion_tokens
 
-        final_text = response.content or "I was unable to complete the request within the iteration limit."
+        final_text = (
+            response.content or "I was unable to complete the request within the iteration limit."
+        )
         result = AgentRunResult(
             response=final_text,
             iterations=defaults.max_tool_iterations,
@@ -459,9 +452,7 @@ class AgentLoop:
                 old_messages, self._provider, consolidation_model
             )
             if facts and "no new facts" not in facts.lower():
-                session.summary = (
-                    f"[Previous conversation context]\n{facts}"
-                )
+                session.summary = f"[Previous conversation context]\n{facts}"
             pruned = session.prune_to_window(defaults.memory_window)
             if self._session_mgr:
                 self._session_mgr.save(session)
@@ -532,6 +523,16 @@ class AgentLoop:
             history_block = "\n".join(f"- {hit}" for hit in history_hits)
             parts.append(f"[Relevant past conversations]\n{history_block}")
 
+        # Search learned patterns from KnowledgeBase (max 3 entries)
+        if self._kb:
+            try:
+                kb_hits = self._kb.search(query, max_results=3)
+                if kb_hits:
+                    kb_block = "\n".join(f"- [{e.category}] {e.content}" for e in kb_hits)
+                    parts.append(f"[Learned patterns]\n{kb_block}")
+            except Exception:
+                pass
+
         if not parts:
             return ""
 
@@ -566,7 +567,9 @@ class AgentLoop:
             except Exception as exc:
                 is_retryable = _is_retryable_error(exc)
                 if not is_retryable or attempt == max_retries - 1:
-                    logger.error("LLM call failed (attempt {}/{}): {}", attempt + 1, max_retries, exc)
+                    logger.error(
+                        "LLM call failed (attempt {}/{}): {}", attempt + 1, max_retries, exc
+                    )
                     raise
 
                 delay = base_delay * (2**attempt)

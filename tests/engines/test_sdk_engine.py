@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import types
@@ -20,7 +21,23 @@ from grip.engines.types import AgentRunResult, EngineProtocol
 
 _mock_sdk = types.ModuleType("claude_agent_sdk")
 _mock_sdk.query = MagicMock(name="query")
-_mock_sdk.tool = MagicMock(name="tool", side_effect=lambda fn: fn)
+
+
+def _mock_tool_decorator(name: str, description: str, input_schema):
+    """Mock for claude_agent_sdk.tool(name, description, input_schema).
+
+    Returns a decorator that attaches name/description metadata to the
+    function and returns it unchanged so tests can call it directly.
+    """
+    def decorator(fn):
+        fn._tool_name = name
+        fn._tool_description = description
+        fn._tool_input_schema = input_schema
+        return fn
+    return decorator
+
+
+_mock_sdk.tool = _mock_tool_decorator
 _mock_sdk.ClaudeAgentOptions = MagicMock(name="ClaudeAgentOptions")
 _mock_sdk.AssistantMessage = type("AssistantMessage", (), {})
 _mock_sdk.ResultMessage = type("ResultMessage", (), {})
@@ -145,6 +162,15 @@ def _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr, tru
         trust_mgr=trust_mgr,
     )
     return runner
+
+
+def _find_tool(tools: list, name: str):
+    """Find a tool function by its _tool_name attribute or __name__."""
+    for fn in tools:
+        tool_name = getattr(fn, "_tool_name", None) or getattr(fn, "__name__", "")
+        if tool_name == name:
+            return fn
+    raise KeyError(f"Tool '{name}' not found in {[getattr(t, '_tool_name', t.__name__) for t in tools]}")
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +348,6 @@ class TestBuildSystemPrompt:
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         prompt = runner._build_system_prompt("hello", "test:session")
 
-        # Should still have memory and metadata sections
         assert "test:session" in prompt
 
     def test_handles_empty_memory_results(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -331,7 +356,6 @@ class TestBuildSystemPrompt:
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         prompt = runner._build_system_prompt("hello", "test:session")
 
-        # Should still have identity files and metadata
         assert "AGENT.md" in prompt
 
 
@@ -363,59 +387,67 @@ class TestBuildCustomTools:
     def test_tool_names(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
-        tool_names = {fn.__name__ for fn in tools}
+        tool_names = {getattr(fn, "_tool_name", fn.__name__) for fn in tools}
         assert "send_message" in tool_names
         assert "send_file" in tool_names
         assert "remember" in tool_names
         assert "recall" in tool_names
 
-    def test_remember_tool_calls_memory_manager(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_remember_tool_calls_memory_manager(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
-        remember_fn = next(fn for fn in tools if fn.__name__ == "remember")
-        remember_fn("user likes Python", "preferences")
+        remember_fn = _find_tool(tools, "remember")
+        await remember_fn({"fact": "user likes Python", "category": "preferences"})
         mock_memory_mgr.append_to_memory.assert_called_once()
 
-    def test_recall_tool_calls_memory_search(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_recall_tool_calls_memory_search(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
-        recall_fn = next(fn for fn in tools if fn.__name__ == "recall")
-        recall_fn("Python")
+        recall_fn = _find_tool(tools, "recall")
+        await recall_fn({"query_text": "Python"})
         mock_memory_mgr.search_memory.assert_called_with("Python", max_results=10)
 
-    def test_send_message_invokes_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_send_message_invokes_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         callback = MagicMock(return_value="sent")
         runner.set_send_callback(callback)
 
         tools = runner._build_custom_tools()
-        send_fn = next(fn for fn in tools if fn.__name__ == "send_message")
-        send_fn("Hello world", "test:session")
+        send_fn = _find_tool(tools, "send_message")
+        await send_fn({"text": "Hello world", "session_key": "test:session"})
         callback.assert_called_once_with("Hello world", "test:session")
 
-    def test_send_message_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_send_message_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
-        send_fn = next(fn for fn in tools if fn.__name__ == "send_message")
-        result = send_fn("Hello world", "test:session")
-        assert "no callback" in result.lower() or "not configured" in result.lower()
+        send_fn = _find_tool(tools, "send_message")
+        result = await send_fn({"text": "Hello world", "session_key": "test:session"})
+        text = result["content"][0]["text"]
+        assert "not configured" in text.lower()
 
-    def test_send_file_invokes_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_send_file_invokes_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         callback = MagicMock(return_value="file sent")
         runner.set_send_file_callback(callback)
 
         tools = runner._build_custom_tools()
-        send_file_fn = next(fn for fn in tools if fn.__name__ == "send_file")
-        send_file_fn("/path/to/file.txt", "a caption", "test:session")
+        send_file_fn = _find_tool(tools, "send_file")
+        await send_file_fn({"file_path": "/path/to/file.txt", "caption": "a caption", "session_key": "test:session"})
         callback.assert_called_once_with("/path/to/file.txt", "a caption", "test:session")
 
-    def test_send_file_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    @pytest.mark.asyncio
+    async def test_send_file_without_callback(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         tools = runner._build_custom_tools()
-        send_file_fn = next(fn for fn in tools if fn.__name__ == "send_file")
-        result = send_file_fn("/path/to/file.txt", "cap", "test:session")
-        assert "no callback" in result.lower() or "not configured" in result.lower()
+        send_file_fn = _find_tool(tools, "send_file")
+        result = await send_file_fn({"file_path": "/path/to/file.txt", "caption": "cap", "session_key": "test:session"})
+        text = result["content"][0]["text"]
+        assert "not configured" in text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -430,12 +462,11 @@ class TestSDKRunnerRun:
     async def test_run_returns_agent_run_result(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
-        # Create mock messages that query() will yield
         assistant_msg = MagicMock()
         assistant_msg.__class__ = _mock_sdk.AssistantMessage
         text_block = MagicMock()
         text_block.text = "Hello from SDK"
-        del text_block.name  # no .name attribute on text blocks
+        del text_block.name
         assistant_msg.content = [text_block]
 
         result_msg = MagicMock()
@@ -445,7 +476,6 @@ class TestSDKRunnerRun:
         del result_text_block.name
         result_msg.content = [result_text_block]
 
-        # Mock query() to return an async iterator
         async def mock_query_iter(**kwargs):
             yield assistant_msg
             yield result_msg
@@ -464,7 +494,7 @@ class TestSDKRunnerRun:
         assistant_msg.__class__ = _mock_sdk.AssistantMessage
         tool_block = MagicMock()
         tool_block.name = "read_file"
-        del tool_block.text  # tool blocks have .name but not .text
+        del tool_block.text
         assistant_msg.content = [tool_block]
 
         result_msg = MagicMock()
@@ -500,7 +530,6 @@ class TestSDKRunnerRun:
         with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
             await runner.run("user question", session_key="test:session")
 
-        # Should have called append_history for both user message and response
         assert mock_memory_mgr.append_history.call_count == 2
 
     @pytest.mark.asyncio
@@ -523,7 +552,6 @@ class TestSDKRunnerRun:
         with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
             await runner.run("test", session_key="s", model="claude-opus-4-6")
 
-        # The model override should be passed through to the options
         assert captured_kwargs.get("options") is not None
 
 
@@ -539,7 +567,6 @@ class TestSDKRunnerSessionManagement:
     async def test_consolidate_session_logs_only(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         """consolidate_session just logs (SDK handles context internally)."""
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
-        # Should not raise
         await runner.consolidate_session("test:session")
 
     @pytest.mark.asyncio

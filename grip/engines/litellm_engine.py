@@ -8,6 +8,8 @@ and the new flat ``AgentRunResult`` used by the dual-engine protocol.
 
 from __future__ import annotations
 
+from typing import Any
+
 from grip.agent.loop import AgentLoop
 from grip.agent.loop import AgentRunResult as OldAgentRunResult
 from grip.config.schema import GripConfig
@@ -43,6 +45,7 @@ class LiteLLMRunner(EngineProtocol):
         session_mgr: SessionManager,
         memory_mgr: MemoryManager,
         trust_mgr: TrustManager | None = None,
+        knowledge_base: Any | None = None,
     ) -> None:
         self._config = config
         self._workspace = workspace
@@ -76,6 +79,7 @@ class LiteLLMRunner(EngineProtocol):
             memory_manager=memory_mgr,
             semantic_cache=cache,
             trust_manager=trust_mgr,
+            knowledge_base=knowledge_base,
         )
 
     # -- Properties for legacy callers --

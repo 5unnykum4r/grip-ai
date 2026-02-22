@@ -154,7 +154,9 @@ class TestLiteLLMRunnerIsEngineProtocol:
 class TestLiteLLMRunnerConstructor:
     """Constructor should wire up provider, registry, loop, and optional cache."""
 
-    def test_creates_provider_and_registry(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    def test_creates_provider_and_registry(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
         from grip.engines.litellm_engine import LiteLLMRunner
 
         with (
@@ -207,6 +209,7 @@ class TestLiteLLMRunnerConstructor:
                 memory_manager=mock_memory_mgr,
                 semantic_cache=None,
                 trust_manager=None,
+                knowledge_base=None,
             )
 
     def test_creates_semantic_cache_when_enabled(
@@ -276,7 +279,9 @@ class TestLiteLLMRunnerRun:
     """run() should delegate to AgentLoop.run() and translate the result."""
 
     @pytest.mark.asyncio
-    async def test_run_delegates_to_loop(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    async def test_run_delegates_to_loop(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
         old_result = _FakeOldRunResult(
@@ -285,8 +290,12 @@ class TestLiteLLMRunnerRun:
             total_usage=_FakeTokenUsage(prompt_tokens=100, completion_tokens=50),
             tool_calls_made=["read_file", "shell"],
             tool_details=[
-                _FakeOldToolCallDetail(name="read_file", success=True, duration_ms=10.0, output_preview="content..."),
-                _FakeOldToolCallDetail(name="shell", success=False, duration_ms=200.0, output_preview="error"),
+                _FakeOldToolCallDetail(
+                    name="read_file", success=True, duration_ms=10.0, output_preview="content..."
+                ),
+                _FakeOldToolCallDetail(
+                    name="shell", success=False, duration_ms=200.0, output_preview="error"
+                ),
             ],
         )
 
@@ -307,7 +316,9 @@ class TestLiteLLMRunnerRun:
         assert len(result.tool_details) == 2
 
     @pytest.mark.asyncio
-    async def test_run_translates_tool_details(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    async def test_run_translates_tool_details(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
         old_result = _FakeOldRunResult(
@@ -333,7 +344,9 @@ class TestLiteLLMRunnerRun:
         assert detail.output_preview == "results..."
 
     @pytest.mark.asyncio
-    async def test_run_uses_default_kwargs(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    async def test_run_uses_default_kwargs(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
         """run() with no explicit session_key or model passes the defaults through."""
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
@@ -342,12 +355,12 @@ class TestLiteLLMRunnerRun:
 
         await runner.run("hi")
 
-        runner.loop.run.assert_awaited_once_with(
-            "hi", session_key="cli:default", model=None
-        )
+        runner.loop.run.assert_awaited_once_with("hi", session_key="cli:default", model=None)
 
     @pytest.mark.asyncio
-    async def test_run_with_zero_tokens(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
+    async def test_run_with_zero_tokens(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
         """When the old result has zero tokens, the new result should too."""
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
 
