@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
@@ -24,6 +25,11 @@ from claude_agent_sdk import (
     tool,
 )
 
+from grip.engines.sdk_hooks import (
+    build_post_tool_use_hook,
+    build_pre_tool_use_hook,
+    build_stop_hook,
+)
 from grip.engines.types import AgentRunResult, EngineProtocol
 from grip.skills.loader import SkillsLoader
 
@@ -256,6 +262,12 @@ class SDKRunner(EngineProtocol):
 
         effective_model = model or self._model
 
+        pre_hook = build_pre_tool_use_hook(
+            Path(self._cwd), self._trust_mgr
+        )
+        post_hook = build_post_tool_use_hook()
+        stop_hook = build_stop_hook(self._memory_mgr)
+
         options = ClaudeAgentOptions(
             model=effective_model,
             system_prompt=system_prompt,
@@ -263,6 +275,11 @@ class SDKRunner(EngineProtocol):
             mcp_servers=mcp_config,
             permission_mode=self._permission_mode,
             cwd=self._cwd,
+            hooks={
+                "pre_tool_use": pre_hook,
+                "post_tool_use": post_hook,
+                "stop": stop_hook,
+            },
         )
 
         response_parts: list[str] = []
