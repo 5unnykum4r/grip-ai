@@ -1,0 +1,100 @@
+[project]
+name = "grip-ai"
+version = "0.1.1"
+description = "Async-first agentic AI platform with multi-provider LLM support, tool execution, and multi-channel chat integration."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Sunny Kumar", email = "5unnykum4r@gmail.com" },
+]
+keywords = [
+    "ai",
+    "agent",
+    "llm",
+    "asyncio",
+    "telegram-bot",
+    "mcp",
+    "automation",
+    "multi-agent",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "loguru>=0.7",
+    "httpx>=0.27",
+    "anyio>=4.0",
+    "litellm>=1.0",
+    "json-repair>=0.30",
+    "typer>=0.12",
+    "rich>=13.0",
+    "InquirerPy>=0.3.4",
+    "prompt-toolkit>=3.0",
+    "croniter>=2.0",
+    "python-telegram-bot>=21.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+
+[project.urls]
+Homepage = "https://github.com/5unnykum4r/grip-ai"
+Repository = "https://github.com/5unnykum4r/grip-ai"
+Issues = "https://github.com/5unnykum4r/grip-ai/issues"
+Documentation = "https://github.com/5unnykum4r/grip-ai#readme"
+
+[project.optional-dependencies]
+discord = ["discord.py>=2.0"]
+slack = ["slack-sdk>=3.26"]
+mcp = ["mcp>=1.0"]
+finance = ["yfinance>=0.2"]
+viz = ["plotext>=5.3"]
+observe = ["opentelemetry-api", "opentelemetry-sdk"]
+all = [
+    "discord.py>=2.0",
+    "slack-sdk>=3.26",
+    "mcp>=1.0",
+    "yfinance>=0.2",
+    "plotext>=5.3",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+]
+
+[project.scripts]
+grip = "grip.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["grip"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["grip"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

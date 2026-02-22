@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+tests/
+*.egg-info/
+dist/
+build/
+.claude/
+TASKS.md
+Pending.md

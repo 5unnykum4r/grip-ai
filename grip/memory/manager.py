@@ -1,0 +1,328 @@
+"""Two-layer memory system: long-term facts + searchable history.
+
+MEMORY.md stores extracted key facts and decisions that persist across
+sessions. HISTORY.md is an append-only log of conversation summaries
+that can be grepped for context retrieval.
+
+Consolidation is triggered when a session grows past the memory window
+threshold: older messages are summarized by the LLM, facts are extracted
+into MEMORY.md, and a summary is appended to HISTORY.md.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from collections import Counter
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from grip.providers.types import LLMMessage, LLMProvider
+
+
+class MemoryManager:
+    """Manages MEMORY.md and HISTORY.md within the workspace.
+
+    Provides read/write for both files and an LLM-driven consolidation
+    process that extracts durable facts from old conversation messages.
+    """
+
+    def __init__(self, workspace_path: Path) -> None:
+        self._memory_dir = workspace_path / "memory"
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
+        self._memory_path = self._memory_dir / "MEMORY.md"
+        self._history_path = self._memory_dir / "HISTORY.md"
+
+    @property
+    def memory_path(self) -> Path:
+        return self._memory_path
+
+    @property
+    def history_path(self) -> Path:
+        return self._history_path
+
+    def read_memory(self) -> str:
+        """Read the full contents of MEMORY.md."""
+        if self._memory_path.exists():
+            return self._memory_path.read_text(encoding="utf-8")
+        return ""
+
+    def write_memory(self, content: str) -> None:
+        """Overwrite MEMORY.md with new content (atomic write)."""
+        tmp = self._memory_path.with_suffix(".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.rename(self._memory_path)
+
+    def append_to_memory(self, entry: str) -> None:
+        """Append a new fact or section to the end of MEMORY.md."""
+        current = self.read_memory()
+        if current and not current.endswith("\n"):
+            current += "\n"
+        self.write_memory(current + entry.rstrip() + "\n")
+
+    def read_history(self) -> str:
+        """Read the full contents of HISTORY.md."""
+        if self._history_path.exists():
+            return self._history_path.read_text(encoding="utf-8")
+        return ""
+
+    def search_history(self, query: str, *, max_results: int = 20) -> list[str]:
+        """Search HISTORY.md using keyword-weighted relevance scoring.
+
+        Tokenizes the query into keywords, scores each history line by
+        TF-IDF-style relevance (term frequency * inverse document frequency),
+        and returns the top results sorted by score descending.
+        Falls back to simple substring match if the query is very short.
+        """
+        content = self.read_history()
+        if not content:
+            return []
+
+        lines = [line for line in content.splitlines() if line.strip()]
+        if not lines:
+            return []
+
+        query_tokens = _tokenize(query)
+
+        # For single-word or very short queries, use simple substring matching
+        if len(query_tokens) <= 1:
+            query_lower = query.lower()
+            return [line for line in lines if query_lower in line.lower()][:max_results]
+
+        # Build document frequency (how many lines contain each token)
+        doc_freq: Counter[str] = Counter()
+        line_token_sets: list[set[str]] = []
+        for line in lines:
+            tokens = set(_tokenize(line))
+            line_token_sets.append(tokens)
+            for token in tokens:
+                doc_freq[token] += 1
+
+        total_docs = len(lines)
+
+        # Score each line by sum of TF-IDF for matching query tokens
+        scored: list[tuple[float, str]] = []
+        for line in lines:
+            line_tokens = _tokenize(line)
+            if not line_tokens:
+                continue
+            tf_counts = Counter(line_tokens)
+            score = 0.0
+            for qt in query_tokens:
+                if qt in tf_counts:
+                    tf = tf_counts[qt] / len(line_tokens)
+                    df = doc_freq.get(qt, 0)
+                    idf = math.log((total_docs + 1) / (df + 1)) + 1.0
+                    score += tf * idf
+            if score > 0:
+                scored.append((score, line))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [line for _, line in scored[:max_results]]
+
+    def search_memory(self, query: str, *, max_results: int = 10) -> list[str]:
+        """Search MEMORY.md using keyword-weighted relevance scoring.
+
+        Same TF-IDF approach as search_history but applied to the structured
+        facts in MEMORY.md. Returns matching bullet points or sections.
+        """
+        content = self.read_memory()
+        if not content:
+            return []
+
+        # Split memory into logical chunks (bullet points or paragraphs)
+        chunks: list[str] = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped:
+                chunks.append(stripped)
+
+        if not chunks:
+            return []
+
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return chunks[:max_results]
+
+        # Simple substring for single-word queries
+        if len(query_tokens) <= 1:
+            query_lower = query.lower()
+            return [c for c in chunks if query_lower in c.lower()][:max_results]
+
+        # TF-IDF scoring
+        doc_freq: Counter[str] = Counter()
+        for chunk in chunks:
+            for token in set(_tokenize(chunk)):
+                doc_freq[token] += 1
+
+        total = len(chunks)
+        scored: list[tuple[float, str]] = []
+        for chunk in chunks:
+            chunk_tokens = _tokenize(chunk)
+            if not chunk_tokens:
+                continue
+            tf_counts = Counter(chunk_tokens)
+            score = 0.0
+            for qt in query_tokens:
+                if qt in tf_counts:
+                    tf = tf_counts[qt] / len(chunk_tokens)
+                    df = doc_freq.get(qt, 0)
+                    idf = math.log((total + 1) / (df + 1)) + 1.0
+                    score += tf * idf
+            if score > 0:
+                scored.append((score, chunk))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [chunk for _, chunk in scored[:max_results]]
+
+    def append_history(self, entry: str) -> None:
+        """Append a timestamped entry to HISTORY.md."""
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"[{timestamp}] {entry.rstrip()}\n"
+
+        # Append directly (no atomic rename needed for append-only log)
+        with self._history_path.open("a", encoding="utf-8") as f:
+            f.write(line)
+
+    def needs_consolidation(self, message_count: int, memory_window: int) -> bool:
+        """Check if consolidation should run based on message count vs window."""
+        return message_count > memory_window * 2
+
+    async def consolidate(
+        self,
+        old_messages: list[LLMMessage],
+        provider: LLMProvider,
+        model: str,
+    ) -> str:
+        """Extract key facts from old messages using the LLM.
+
+        Sends the old messages to the LLM with a consolidation prompt,
+        appends extracted facts to MEMORY.md, and writes a summary
+        to HISTORY.md.
+
+        Returns the extracted facts string.
+        """
+        if not old_messages:
+            return ""
+
+        conversation_text = self._format_messages_for_consolidation(old_messages)
+
+        consolidation_prompt = (
+            "You are a memory consolidation assistant. Review the following conversation "
+            "and extract the key facts, decisions, and important information that should "
+            "be remembered long-term.\n\n"
+            "Rules:\n"
+            "- Extract only durable facts (user preferences, project decisions, names, "
+            "technical choices, important outcomes).\n"
+            "- Skip transient information (greetings, small talk, tool execution details).\n"
+            "- Format as a bulleted list with concise entries.\n"
+            "- If there are no important facts to extract, respond with 'No new facts.'\n\n"
+            f"Conversation:\n{conversation_text}"
+        )
+
+        logger.info("Running memory consolidation on {} messages", len(old_messages))
+
+        response = await provider.chat(
+            [
+                LLMMessage(role="system", content="You extract key facts from conversations."),
+                LLMMessage(role="user", content=consolidation_prompt),
+            ],
+            model=model,
+            temperature=0.3,
+            max_tokens=1024,
+        )
+
+        facts = response.content or ""
+
+        if facts and "no new facts" not in facts.lower():
+            self.append_to_memory(f"\n### Consolidated {datetime.now(UTC).strftime('%Y-%m-%d')}\n{facts}\n")
+            logger.info("Appended consolidated facts to MEMORY.md")
+
+        summary = self._build_history_summary(old_messages)
+        self.append_history(summary)
+        logger.info("Appended summary to HISTORY.md")
+
+        return facts
+
+    @staticmethod
+    def _format_messages_for_consolidation(messages: list[LLMMessage]) -> str:
+        """Convert messages to a readable text block for the consolidation LLM."""
+        lines: list[str] = []
+        for msg in messages:
+            if msg.role == "system":
+                continue
+            prefix = msg.role.upper()
+            if msg.content:
+                content = msg.content[:2000]
+                lines.append(f"{prefix}: {content}")
+            if msg.tool_calls:
+                tool_names = ", ".join(tc.function_name for tc in msg.tool_calls)
+                lines.append(f"{prefix}: [called tools: {tool_names}]")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_history_summary(messages: list[LLMMessage]) -> str:
+        """Build a one-line summary of a batch of messages for HISTORY.md."""
+        user_msgs = [m for m in messages if m.role == "user" and m.content]
+        if not user_msgs:
+            return f"Consolidated {len(messages)} messages (no user content)"
+
+        topics: list[str] = []
+        for m in user_msgs[:5]:
+            snippet = (m.content or "")[:80].replace("\n", " ").strip()
+            if snippet:
+                topics.append(snippet)
+
+        return f"Consolidated {len(messages)} messages. Topics: {'; '.join(topics)}"
+
+
+# Stopwords filtered out during tokenization to improve TF-IDF relevance
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "it", "in", "on", "at", "to", "of", "for",
+    "and", "or", "but", "not", "with", "from", "by", "as", "was", "were",
+    "be", "been", "has", "have", "had", "do", "does", "did", "will",
+    "would", "could", "should", "can", "may", "this", "that", "these",
+    "those", "i", "you", "he", "she", "we", "they", "me", "him", "her",
+    "us", "them", "my", "your", "his", "its", "our", "their", "what",
+    "which", "who", "when", "where", "how", "all", "each", "every",
+    "some", "any", "no", "just", "about", "up", "out", "so", "if",
+    "then", "than", "too", "very", "also", "here", "there",
+})
+
+_WORD_RE = re.compile(r"[a-z0-9_]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    """Split text into lowercase tokens, filtering stopwords and short tokens."""
+    return [
+        word for word in _WORD_RE.findall(text.lower())
+        if len(word) > 2 and word not in _STOPWORDS
+    ]
+
+
+def build_memory_tools_description() -> dict[str, Any]:
+    """Return a tool definition that the agent can use to search memory.
+
+    This is registered as an additional tool so the agent can proactively
+    search its own history when it needs to recall something.
+    """
+    return {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": "Search the conversation history log for past interactions matching a query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search term to find in conversation history.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    }
