@@ -89,6 +89,9 @@ def create_api_app(config: GripConfig, config_path: Path | None = None) -> FastA
 
         yield
 
+        from grip.pool import shutdown_pools
+
+        await shutdown_pools()
         logger.info("API server shutting down")
 
     app = FastAPI(
