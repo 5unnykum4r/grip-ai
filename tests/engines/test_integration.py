@@ -144,3 +144,30 @@ class TestTrustManagerWiring:
              patch("grip.engines.litellm_engine.create_default_registry"):
             engine = create_engine(config, ws, MagicMock(), MagicMock(), trust_mgr=trust)
         assert isinstance(engine, LiteLLMRunner)
+
+
+# ===================================================================
+# API app uses engine factory (not direct AgentLoop)
+# ===================================================================
+
+class TestAPIEngineWiring:
+    def test_api_app_does_not_instantiate_agent_loop_directly(self):
+        """The API app should use create_engine, not construct AgentLoop directly."""
+        import ast
+        from pathlib import Path
+
+        app_source = Path("grip/api/app.py").read_text()
+        tree = ast.parse(app_source)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "AgentLoop":
+                    raise AssertionError("API app should not directly instantiate AgentLoop")
+
+    def test_api_app_imports_create_engine(self):
+        """The API app should import create_engine from the factory."""
+        from pathlib import Path
+
+        app_source = Path("grip/api/app.py").read_text()
+        assert "create_engine" in app_source
