@@ -1,11 +1,12 @@
 """Context builder: assembles the system prompt from workspace files.
 
-Reads identity files (AGENT.md, IDENTITY.md, SOUL.md, USER.md, MEMORY.md),
-appends available tool descriptions and metadata, and returns a single
+Reads identity files (AGENT.md, IDENTITY.md, SOUL.md, USER.md, SHIELD.md),
+appends a compact skill listing and metadata, and returns a single
 system message ready for the LLM.
 
-Tool and skill summaries come from TOOLS.md (auto-generated at startup by
-grip.tools.docs). If TOOLS.md is missing, falls back to inline generation.
+Tool definitions are already sent via the API's ``tools`` parameter, so
+the system prompt only carries identity, skills overview, shield policy,
+tone hints, and runtime metadata — keeping token usage minimal.
 """
 
 from __future__ import annotations
@@ -13,16 +14,12 @@ from __future__ import annotations
 import platform
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from grip import __version__
 from grip.providers.types import LLMMessage
 from grip.workspace.manager import WorkspaceManager
-
-if TYPE_CHECKING:
-    from grip.tools.base import ToolRegistry
-
 
 # Patterns used by _detect_tone_hint() to classify the user's emotional state.
 _ERROR_PATTERNS = re.compile(
@@ -47,7 +44,10 @@ def _detect_tone_hint(user_message: str) -> str:
     if not user_message:
         return ""
 
-    is_caps = sum(1 for c in user_message if c.isupper()) > len(user_message) * 0.6 and len(user_message) > 10
+    is_caps = (
+        sum(1 for c in user_message if c.isupper()) > len(user_message) * 0.6
+        and len(user_message) > 10
+    )
     frustrated = bool(_FRUSTRATION_PATTERNS.search(user_message)) or is_caps
     has_error = bool(_ERROR_PATTERNS.search(user_message))
     brainstorming = bool(_BRAINSTORM_PATTERNS.search(user_message))
@@ -86,12 +86,14 @@ class ContextBuilder:
     """Builds a system prompt from workspace files and runtime metadata.
 
     The system prompt follows this structure:
-      1. Agent identity (AGENT.md + IDENTITY.md + SOUL.md)
-      2. User context (USER.md)
-      3. Long-term memory (MEMORY.md)
-      4. Tools & skills manifest (from TOOLS.md)
-      5. Always-loaded skill content
-      6. Runtime metadata (datetime, platform)
+      1. Agent identity (AGENT.md + IDENTITY.md + SOUL.md + USER.md)
+      2. Shield policy (SHIELD.md — runtime threat feed evaluation rules)
+      3. Compact skill listing (name + one-line description only)
+      4. Tone adaptation (based on user message sentiment)
+      5. Runtime metadata (datetime, platform, version)
+
+    Tool definitions are NOT included here — they travel via the API's
+    ``tools`` parameter and are therefore excluded to save tokens.
     """
 
     def __init__(self, workspace: WorkspaceManager) -> None:
@@ -105,9 +107,6 @@ class ContextBuilder:
     def build_system_message(
         self,
         *,
-        tool_definitions: list[dict[str, Any]] | None = None,
-        tool_registry: ToolRegistry | None = None,
-        skill_names: list[str] | None = None,
         user_message: str = "",
         session_key: str = "",
     ) -> LLMMessage:
@@ -118,26 +117,10 @@ class ContextBuilder:
         if identity:
             parts.append(identity)
 
-        # Prefer pre-generated TOOLS.md over inline tool/skill summaries
-        tools_md = self._workspace.read_file("TOOLS.md")
-        if tools_md and tools_md.strip():
-            parts.append(tools_md.strip())
-        elif tool_definitions:
-            # Fallback: inline generation when TOOLS.md hasn't been written yet
-            parts.append(self._summarize_tools_inline(tool_definitions, tool_registry))
-            if skill_names:
-                skills_list = ", ".join(skill_names)
-                parts.append(
-                    f"## Available Skills\n\n"
-                    f"You have access to these skills: {skills_list}\n"
-                    f"Use the read_file tool to load a skill's full instructions when needed."
-                )
+        skills_listing = self._build_skills_listing()
+        if skills_listing:
+            parts.append(skills_listing)
 
-        always_loaded = self._workspace.read_builtin_skills()
-        if always_loaded:
-            parts.append(always_loaded)
-
-        # Dynamic persona: adapt tone based on user's current message
         tone_hint = _detect_tone_hint(user_message)
         if tone_hint:
             parts.append(tone_hint)
@@ -149,8 +132,9 @@ class ContextBuilder:
         return LLMMessage(role="system", content=system_prompt)
 
     def _build_identity_section(self) -> str:
-        """Concatenate AGENT.md, IDENTITY.md, and SOUL.md into a single identity block.
+        """Concatenate identity + shield files into a single block.
 
+        Includes AGENT.md, IDENTITY.md, SOUL.md, USER.md, and SHIELD.md.
         Caches the result since these files rarely change mid-session.
         """
         if self._cached_identity is not None:
@@ -159,7 +143,7 @@ class ContextBuilder:
         identity_files = self._workspace.read_identity_files()
         sections: list[str] = []
 
-        for filename in ("AGENT.md", "IDENTITY.md", "SOUL.md", "USER.md"):
+        for filename in ("AGENT.md", "IDENTITY.md", "SOUL.md", "USER.md", "SHIELD.md"):
             content = identity_files.get(filename)
             if content and content.strip():
                 sections.append(content.strip())
@@ -167,16 +151,29 @@ class ContextBuilder:
         self._cached_identity = "\n\n".join(sections)
         return self._cached_identity
 
-    @staticmethod
-    def _summarize_tools_inline(
-        tool_definitions: list[dict[str, Any]],
-        tool_registry: ToolRegistry | None = None,
-    ) -> str:
-        """Fallback inline tool summary when TOOLS.md is not available."""
-        lines: list[str] = ["## Available Tools"]
-        for tool_def in tool_definitions:
-            fn = tool_def.get("function", tool_def)
-            lines.append(_format_tool_line(fn))
+    def _build_skills_listing(self) -> str:
+        """Build a compact name+description listing of available skills.
+
+        Full skill content is NOT injected — the LLM can load a skill's
+        instructions on demand via the read_file tool when needed.
+        """
+        from grip.skills.loader import SkillsLoader
+
+        try:
+            loader = SkillsLoader(self._workspace.root)
+            skills = loader.scan()
+        except Exception as exc:
+            logger.debug("Failed to scan skills for system prompt: {}", exc)
+            return ""
+
+        if not skills:
+            return ""
+
+        lines = ["## Available Skills\n"]
+        for s in skills:
+            desc = f": {s.description}" if s.description else ""
+            lines.append(f"- **{s.name}**{desc}")
+        lines.append("\nUse the read_file tool to load a skill's full instructions when needed.")
         return "\n".join(lines)
 
     @staticmethod
@@ -187,26 +184,8 @@ class ContextBuilder:
             f"- Current UTC time: {now.strftime('%Y-%m-%d %H:%M:%S')}",
             f"- Platform: {platform.system()} {platform.release()}",
             f"- Python: {platform.python_version()}",
-            "- grip version: 0.1.1",
+            f"- grip version: {__version__}",
         ]
         if session_key:
             lines.append(f"- Session key: {session_key}")
         return "\n".join(lines)
-
-
-def _format_tool_line(fn: dict[str, Any]) -> str:
-    """Format a single tool definition into a markdown line."""
-    name = fn.get("name", "unknown")
-    desc = fn.get("description", "No description")
-    params = fn.get("parameters", {})
-    required = params.get("required", [])
-    properties = params.get("properties", {})
-
-    param_parts: list[str] = []
-    for pname, pschema in properties.items():
-        ptype = pschema.get("type", "any")
-        marker = " (required)" if pname in required else ""
-        param_parts.append(f"{pname}: {ptype}{marker}")
-
-    params_str = ", ".join(param_parts) if param_parts else "none"
-    return f"- **{name}**({params_str}): {desc}"

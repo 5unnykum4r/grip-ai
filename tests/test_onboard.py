@@ -25,6 +25,7 @@ class TestProviderChoiceConstants:
             "qwen",
             "minimax",
             "moonshot",
+            "ollama_cloud",
         ]
         assert expected == _CLOUD_PROVIDERS
 
@@ -56,8 +57,8 @@ class TestBuildProviderChoices:
         from grip.cli.onboard import _build_provider_choices
 
         choices = _build_provider_choices()
-        # 9 cloud providers + "Ollama (Local)" + "Other Models"
-        assert len(choices) == 11
+        # Claude SDK + 10 cloud providers + "Ollama (Local)" + "Other Models"
+        assert len(choices) == 13
 
     def test_provider_choices_end_with_local_options(self):
         from grip.cli.onboard import _build_provider_choices
@@ -70,7 +71,7 @@ class TestBuildProviderChoices:
         from grip.cli.onboard import _build_provider_choices
 
         choices = _build_provider_choices()
-        assert choices[0].value == "openrouter"
+        assert choices[0].value == "_claude_sdk"
 
     def test_local_choices_count(self):
         from grip.cli.onboard import _build_local_choices

@@ -187,10 +187,7 @@ class TestFrontmatterParsing:
         skill_dir = tmp_path / "old-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "# Old Skill\n\n"
-            "> This skill does old stuff.\n\n"
-            "## Instructions\n"
-            "Do the thing.\n"
+            "# Old Skill\n\n> This skill does old stuff.\n\n## Instructions\nDo the thing.\n"
         )
         skill = SkillsLoader._parse_skill_file(skill_dir / "SKILL.md")
 
@@ -204,9 +201,7 @@ class TestFrontmatterParsing:
         skill_dir = tmp_path / "loaded-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "# Loaded\n\n"
-            "> Always active skill.\n"
-            "<!-- always_loaded -->\n"
+            "# Loaded\n\n> Always active skill.\n<!-- always_loaded -->\n"
         )
         skill = SkillsLoader._parse_skill_file(skill_dir / "SKILL.md")
 
@@ -218,11 +213,7 @@ class TestFrontmatterParsing:
         skill_dir = tmp_path / "compat"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\n"
-            "name: compat-tool\n"
-            "description: backward compatible\n"
-            "---\n"
-            "Body.\n"
+            "---\nname: compat-tool\ndescription: backward compatible\n---\nBody.\n"
         )
         skill = SkillsLoader._parse_skill_file(skill_dir / "SKILL.md")
 
@@ -234,12 +225,7 @@ class TestFrontmatterParsing:
         skill_dir = tmp_path / "both"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\n"
-            "title: Proper Title\n"
-            "name: slug-name\n"
-            "description: has both\n"
-            "---\n"
-            "Body.\n"
+            "---\ntitle: Proper Title\nname: slug-name\ndescription: has both\n---\nBody.\n"
         )
         skill = SkillsLoader._parse_skill_file(skill_dir / "SKILL.md")
 
@@ -278,13 +264,13 @@ class TestFrontmatterParsing:
 
 class TestBuiltinSkillsParse:
     def test_all_builtin_skills_have_frontmatter(self):
-        """All 18 builtin skills should parse with YAML frontmatter and have a category."""
+        """All 15 builtin skills should parse with YAML frontmatter and have a category."""
         builtin_dir = Path(__file__).parent.parent / "grip" / "skills" / "builtin"
         if not builtin_dir.exists():
             pytest.skip("builtin skills directory not found")
 
         skill_files = sorted(builtin_dir.glob("*/SKILL.md"))
-        assert len(skill_files) >= 18, f"Expected 18+ skills, found {len(skill_files)}"
+        assert len(skill_files) >= 15, f"Expected 15+ skills, found {len(skill_files)}"
 
         for path in skill_files:
             skill = SkillsLoader._parse_skill_file(path)

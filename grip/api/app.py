@@ -6,7 +6,7 @@ create_api_app() builds a fully wired FastAPI instance with:
   - Sanitized error handlers
   - All route modules mounted
 
-The app stores shared state (agent loop, registries, managers) on app.state
+The app stores shared state (engine, registries, managers) on app.state
 so that FastAPI dependency injection can retrieve them in route handlers.
 """
 
@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from grip.agent.loop import AgentLoop
+from grip import __version__
 from grip.api.auth import ensure_auth_token
 from grip.api.errors import register_error_handlers
 from grip.api.middleware import (
@@ -33,11 +33,10 @@ from grip.api.middleware import (
 from grip.api.rate_limit import SlidingWindowRateLimiter
 from grip.api.routers import chat, health, management, sessions, tools
 from grip.config.schema import GripConfig
+from grip.engines.factory import create_engine
 from grip.memory.manager import MemoryManager
-from grip.providers.registry import create_provider
 from grip.session.manager import SessionManager
 from grip.skills.loader import SkillsLoader
-from grip.tools import create_default_registry
 from grip.workspace.manager import WorkspaceManager
 
 
@@ -59,27 +58,18 @@ def create_api_app(config: GripConfig, config_path: Path | None = None) -> FastA
         if not ws.is_initialized:
             ws.initialize()
 
-        provider = create_provider(config)
-        registry = create_default_registry(mcp_servers=config.tools.mcp_servers)
         session_mgr = SessionManager(ws.root / "sessions")
         memory_mgr = MemoryManager(ws.root)
         skills_loader = SkillsLoader(ws.root)
         skills_loader.scan()
 
-        loop = AgentLoop(
-            config,
-            provider,
-            ws,
-            tool_registry=registry,
-            session_manager=session_mgr,
-            memory_manager=memory_mgr,
-        )
+        engine = create_engine(config, ws, session_mgr, memory_mgr)
 
         app.state.config = config
         app.state.config_path = config_path
         app.state.auth_token = auth_token
-        app.state.agent_loop = loop
-        app.state.tool_registry = registry
+        app.state.engine = engine
+        app.state.tool_registry = getattr(engine, "registry", None)
         app.state.session_mgr = session_mgr
         app.state.memory_mgr = memory_mgr
         app.state.skills_loader = skills_loader
@@ -99,11 +89,14 @@ def create_api_app(config: GripConfig, config_path: Path | None = None) -> FastA
 
         yield
 
+        from grip.pool import shutdown_pools
+
+        await shutdown_pools()
         logger.info("API server shutting down")
 
     app = FastAPI(
         title="grip API",
-        version="0.1.1",
+        version=__version__,
         description="Async-first agentic AI platform REST API",
         docs_url=None,
         redoc_url=None,

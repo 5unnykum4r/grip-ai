@@ -11,16 +11,16 @@ import math
 
 from fastapi import HTTPException, Request, status
 
-from grip.agent.loop import AgentLoop
 from grip.api.rate_limit import SlidingWindowRateLimiter
 from grip.config.schema import GripConfig
+from grip.engines.types import EngineProtocol
 from grip.memory.manager import MemoryManager
 from grip.session.manager import SessionManager
 
 
-def get_agent_loop(request: Request) -> AgentLoop:
-    """Retrieve the AgentLoop from app.state."""
-    return request.app.state.agent_loop
+def get_engine(request: Request) -> EngineProtocol:
+    """Retrieve the Engine from app.state."""
+    return request.app.state.engine
 
 
 def get_session_mgr(request: Request) -> SessionManager:

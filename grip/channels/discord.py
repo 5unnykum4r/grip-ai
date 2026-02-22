@@ -19,6 +19,16 @@ from grip.config.schema import ChannelEntry
 
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 
+_DISCORD_COMMANDS = {
+    "help": "List available commands",
+    "new": "Start a fresh conversation",
+    "status": "Show session info",
+    "model": "Show or switch AI model",
+    "clear": "Clear conversation history",
+    "compact": "Summarize and compress history",
+    "version": "Show grip version",
+}
+
 
 class DiscordChannel(BaseChannel):
     """Discord bot channel via discord.py library."""
@@ -71,6 +81,27 @@ class DiscordChannel(BaseChannel):
                 logger.warning("Discord: blocked message from non-allowed user {}", user_id)
                 return
 
+            text = message.content.strip()
+            if text.startswith(("!", "/")):
+                parts = text[1:].split(maxsplit=1)
+                command = parts[0].lower()
+                arg = parts[1] if len(parts) > 1 else ""
+                if command in _DISCORD_COMMANDS:
+                    cmd_msg = InboundMessage(
+                        channel="discord",
+                        chat_id=str(message.channel.id),
+                        user_id=user_id,
+                        text=f"/{command} {arg}".strip(),
+                        metadata={
+                            "message_id": str(message.id),
+                            "guild_id": str(message.guild.id) if message.guild else "",
+                            "command": command,
+                            "arg": arg,
+                        },
+                    )
+                    await bus.push_inbound(cmd_msg)
+                    return
+
             msg = InboundMessage(
                 channel="discord",
                 chat_id=str(message.channel.id),
@@ -83,9 +114,7 @@ class DiscordChannel(BaseChannel):
             )
             await bus.push_inbound(msg)
 
-        self._task = asyncio.create_task(
-            self._client.start(token), name="discord-bot"
-        )
+        self._task = asyncio.create_task(self._client.start(token), name="discord-bot")
         await self._ready_event.wait()
         logger.info("Discord channel started")
 

@@ -117,6 +117,21 @@ class AgentDefaults(BaseModel):
         default=False,
         description="When True, tools simulate execution without writing files or running commands.",
     )
+    engine: str = Field(
+        default="claude_sdk",
+        pattern="^(claude_sdk|litellm)$",
+        description="Agent engine: 'claude_sdk' (primary, Claude models via Agent SDK) "
+        "or 'litellm' (fallback, any model via LiteLLM).",
+    )
+    sdk_model: str = Field(
+        default="claude-sonnet-4-6",
+        description="Claude model to use in SDK mode. "
+        "Options: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001.",
+    )
+    sdk_permission_mode: str = Field(
+        default="acceptEdits",
+        description="SDK permission mode: 'acceptEdits', 'bypassPermissions', or 'default'.",
+    )
 
 
 class ModelTiersConfig(BaseModel):

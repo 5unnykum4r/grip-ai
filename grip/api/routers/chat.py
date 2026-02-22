@@ -1,20 +1,23 @@
-"""Chat endpoint for the grip REST API.
+"""Chat endpoints for the grip REST API.
 
-POST /api/v1/chat — blocking request/response. Sends the user message
-through the agent loop and returns the final response with metrics.
+POST /api/v1/chat        — blocking request/response
+POST /api/v1/chat/stream — Server-Sent Events stream with start/message/done events
 """
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sse_starlette.sse import EventSourceResponse
 
-from grip.agent.loop import AgentLoop
 from grip.api.auth import require_auth
-from grip.api.dependencies import check_rate_limit, check_token_rate_limit, get_agent_loop
+from grip.api.dependencies import check_rate_limit, check_token_rate_limit, get_engine
+from grip.engines.types import EngineProtocol
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -61,7 +64,7 @@ async def chat(
     body: ChatRequest,
     request: Request,
     token: str = Depends(require_auth),
-    loop: AgentLoop = Depends(get_agent_loop),  # noqa: B008
+    engine: EngineProtocol = Depends(get_engine),  # noqa: B008
 ) -> ChatResponse:
     """Send a message to the agent and get a blocking response."""
     check_token_rate_limit(request, token)
@@ -69,7 +72,7 @@ async def chat(
     session_key = body.session_key or f"api:{uuid.uuid4().hex[:12]}"
 
     try:
-        result = await loop.run(
+        result = await engine.run(
             body.message,
             session_key=session_key,
             model=body.model,
@@ -84,9 +87,65 @@ async def chat(
         response=result.response,
         iterations=result.iterations,
         usage={
-            "prompt_tokens": result.total_usage.prompt_tokens,
-            "completion_tokens": result.total_usage.completion_tokens,
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
         },
         tool_calls_made=result.tool_calls_made,
         session_key=session_key,
     )
+
+
+@router.post(
+    "/chat/stream",
+    dependencies=[Depends(check_rate_limit)],
+)
+async def chat_stream(
+    body: ChatRequest,
+    request: Request,
+    token: str = Depends(require_auth),
+    engine: EngineProtocol = Depends(get_engine),  # noqa: B008
+) -> EventSourceResponse:
+    """Send a message to the agent and stream the response as Server-Sent Events.
+
+    Event types:
+      - ``start``   — session_key for correlation
+      - ``message`` — the agent's full response text
+      - ``done``    — iterations, usage, and tool_calls_made
+      - ``error``   — detail string if execution fails
+    """
+    check_token_rate_limit(request, token)
+
+    session_key = body.session_key or f"api:{uuid.uuid4().hex[:12]}"
+
+    async def event_generator() -> AsyncGenerator[dict, None]:
+        yield {"event": "start", "data": json.dumps({"session_key": session_key})}
+        try:
+            result = await engine.run(
+                body.message,
+                session_key=session_key,
+                model=body.model,
+            )
+            yield {
+                "event": "message",
+                "data": json.dumps({"text": result.response}),
+            }
+            yield {
+                "event": "done",
+                "data": json.dumps(
+                    {
+                        "iterations": result.iterations,
+                        "usage": {
+                            "prompt_tokens": result.prompt_tokens,
+                            "completion_tokens": result.completion_tokens,
+                        },
+                        "tool_calls_made": result.tool_calls_made,
+                    }
+                ),
+            }
+        except Exception:
+            yield {
+                "event": "error",
+                "data": json.dumps({"detail": "Agent execution failed"}),
+            }
+
+    return EventSourceResponse(event_generator())

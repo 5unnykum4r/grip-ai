@@ -7,6 +7,7 @@ for each request, improving performance.
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import httpx
@@ -106,6 +107,8 @@ class ProviderPool:
 
 _global_http_pool: ConnectionPool | None = None
 _global_provider_pool: ProviderPool | None = None
+_http_pool_lock = threading.Lock()
+_provider_pool_lock = threading.Lock()
 
 
 def get_http_pool(
@@ -113,20 +116,36 @@ def get_http_pool(
     max_keepalive: int = 20,
     timeout: float = 30.0,
 ) -> ConnectionPool:
-    """Get the global HTTP connection pool."""
+    """Get the global HTTP connection pool (thread-safe)."""
     global _global_http_pool
     if _global_http_pool is None:
-        _global_http_pool = ConnectionPool(
-            max_connections=max_connections,
-            max_keepalive=max_keepalive,
-            timeout=timeout,
-        )
+        with _http_pool_lock:
+            if _global_http_pool is None:
+                _global_http_pool = ConnectionPool(
+                    max_connections=max_connections,
+                    max_keepalive=max_keepalive,
+                    timeout=timeout,
+                )
     return _global_http_pool
 
 
 def get_provider_pool() -> ProviderPool:
-    """Get the global provider pool."""
+    """Get the global provider pool (thread-safe)."""
     global _global_provider_pool
     if _global_provider_pool is None:
-        _global_provider_pool = ProviderPool()
+        with _provider_pool_lock:
+            if _global_provider_pool is None:
+                _global_provider_pool = ProviderPool()
     return _global_provider_pool
+
+
+async def shutdown_pools() -> None:
+    """Close all global connection pools and reset them."""
+    global _global_http_pool, _global_provider_pool
+    if _global_http_pool is not None:
+        await _global_http_pool.close()
+        _global_http_pool = None
+    if _global_provider_pool is not None:
+        await _global_provider_pool.close_all()
+        _global_provider_pool = None
+    logger.debug("All global pools shut down")

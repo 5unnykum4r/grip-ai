@@ -14,8 +14,8 @@ from datetime import UTC, datetime
 
 from loguru import logger
 
-from grip.agent.loop import AgentLoop
 from grip.config.schema import AgentProfile, GripConfig
+from grip.engines.types import EngineProtocol
 from grip.tools.base import ToolRegistry
 from grip.workflow.models import (
     StepDef,
@@ -31,19 +31,19 @@ TEMPLATE_PATTERN = re.compile(r"\{\{(\w+)\.output\}\}")
 class WorkflowEngine:
     """Executes multi-step workflows using agent profiles.
 
-    Each step runs through an AgentLoop configured per the step's profile.
-    The engine manages step ordering (parallel layers), template resolution,
-    and result aggregation.
+    Each step runs through an EngineProtocol implementation configured per
+    the step's profile. The engine manages step ordering (parallel layers),
+    template resolution, and result aggregation.
     """
 
     def __init__(
         self,
         config: GripConfig,
-        base_loop: AgentLoop,
+        engine: EngineProtocol,
         tool_registry: ToolRegistry,
     ) -> None:
         self._config = config
-        self._base_loop = base_loop
+        self._engine = engine
         self._registry = tool_registry
         self._profiles = config.agents.profiles
 
@@ -79,16 +79,11 @@ class WorkflowEngine:
                 step_def = step_map[step_name]
                 step_result = result.step_results[step_name]
                 resolved_prompt = self._resolve_template(step_def.prompt, result.step_results)
-                tasks.append(
-                    self._execute_step(step_def, step_result, resolved_prompt)
-                )
+                tasks.append(self._execute_step(step_def, step_result, resolved_prompt))
 
             await asyncio.gather(*tasks)
 
-            if any(
-                result.step_results[name].status == StepStatus.FAILED
-                for name in layer_names
-            ):
+            if any(result.step_results[name].status == StepStatus.FAILED for name in layer_names):
                 logger.warning("Layer {} had failures, skipping dependent steps", layer_idx)
                 self._skip_dependents(layer_names, layers[layer_idx:], result, step_map)
                 break
@@ -119,7 +114,7 @@ class WorkflowEngine:
         step_result: StepResult,
         resolved_prompt: str,
     ) -> None:
-        """Execute a single workflow step through the agent loop."""
+        """Execute a single workflow step through the engine."""
         step_result.mark_running()
         profile = self._profiles.get(step_def.profile, AgentProfile())
 
@@ -128,7 +123,7 @@ class WorkflowEngine:
 
         try:
             agent_result = await asyncio.wait_for(
-                self._base_loop.run(
+                self._engine.run(
                     resolved_prompt,
                     session_key=session_key,
                     model=model_override,
@@ -171,8 +166,7 @@ class WorkflowEngine:
     ) -> None:
         """Mark steps that depend on failed steps as skipped."""
         failed_set = {
-            name for name in failed_layer
-            if result.step_results[name].status == StepStatus.FAILED
+            name for name in failed_layer if result.step_results[name].status == StepStatus.FAILED
         }
 
         for layer in remaining_layers:

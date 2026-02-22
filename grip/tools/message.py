@@ -44,10 +44,7 @@ class MessageTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Send a message to the user immediately. Use this for progress updates, "
-            "intermediate results, or when a subagent needs to report back."
-        )
+        return "Send a text message to the user immediately via the configured channel."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -106,11 +103,7 @@ class SendFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Send a file to the user as an attachment (photo for images, document for other files). "
-            "Use this to share generated charts, images, PDFs, CSVs, or any file directly in the chat. "
-            "The file must exist on disk — provide the absolute path."
-        )
+        return "Send a file to the user as an attachment. Provide the absolute path to an existing file."
 
     @property
     def parameters(self) -> dict[str, Any]:

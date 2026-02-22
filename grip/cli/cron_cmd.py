@@ -22,13 +22,13 @@ cron_app = typer.Typer(no_args_is_help=True)
 
 
 def _get_cron_service() -> CronService:
-    """Build a CronService from the current config (read-only, no agent loop)."""
+    """Build a CronService from the current config (read-only, no engine)."""
     from grip.cli.app import state
 
     config = load_config(state.config_path)
     ws_path = config.agents.defaults.workspace.expanduser().resolve()
-    # Pass None as agent_loop — CLI only manages jobs, doesn't execute them
-    return CronService(ws_path / "cron", agent_loop=None, config=config.cron)
+    # Pass None as engine -- CLI only manages jobs, doesn't execute them
+    return CronService(ws_path / "cron", engine=None, config=config.cron)  # type: ignore[arg-type]
 
 
 @cron_app.command(name="list")
@@ -62,7 +62,9 @@ def cron_add(
     name: str = typer.Argument(help="Job name."),  # noqa: B008
     schedule: str = typer.Argument(help="Cron expression (e.g. '*/5 * * * *')."),  # noqa: B008
     prompt: str = typer.Argument(help="Prompt to send to the agent when the job fires."),  # noqa: B008
-    reply_to: str = typer.Option("", "--reply-to", "-r", help="Session key to route results to (e.g. 'telegram:12345')."),  # noqa: B008
+    reply_to: str = typer.Option(
+        "", "--reply-to", "-r", help="Session key to route results to (e.g. 'telegram:12345')."
+    ),  # noqa: B008
 ) -> None:
     """Add a new cron job."""
     svc = _get_cron_service()
