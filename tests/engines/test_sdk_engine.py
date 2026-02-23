@@ -19,7 +19,6 @@ from grip.engines.types import AgentRunResult, EngineProtocol
 # ---------------------------------------------------------------------------
 
 _mock_sdk = types.ModuleType("claude_agent_sdk")
-_mock_sdk.query = MagicMock(name="query")
 
 
 class _MockSdkMcpTool:
@@ -68,12 +67,47 @@ class _MockHookMatcher:
         self.timeout = timeout
 
 
+class _MockClaudeSDKClient:
+    """Mock for claude_agent_sdk.ClaudeSDKClient.
+
+    Supports ``async with`` context manager and ``query()`` / ``receive_response()``.
+    Tests can set ``_MockClaudeSDKClient._messages`` to control what
+    ``receive_response()`` yields.
+    """
+
+    _messages: list = []
+
+    def __init__(self, options=None):
+        self.options = options
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def connect(self, prompt=None):
+        pass
+
+    async def query(self, prompt, session_id="default"):
+        pass
+
+    async def receive_response(self):
+        for msg in self._messages:
+            yield msg
+
+    async def disconnect(self):
+        pass
+
+
 _mock_sdk.tool = _mock_tool_decorator
 _mock_sdk.create_sdk_mcp_server = _mock_create_sdk_mcp_server
 _mock_sdk.HookMatcher = _MockHookMatcher
 _mock_sdk.ClaudeAgentOptions = MagicMock(name="ClaudeAgentOptions")
+_mock_sdk.ClaudeSDKClient = _MockClaudeSDKClient
 _mock_sdk.AssistantMessage = type("AssistantMessage", (), {})
 _mock_sdk.ResultMessage = type("ResultMessage", (), {})
+_mock_sdk.CLIConnectionError = type("CLIConnectionError", (Exception,), {})
 
 
 @pytest.fixture(autouse=True)
@@ -696,7 +730,7 @@ class TestBuildCustomTools:
 
 
 class TestSDKRunnerRun:
-    """run() should call query() and collect messages into AgentRunResult."""
+    """run() should use ClaudeSDKClient and collect messages into AgentRunResult."""
 
     @pytest.mark.asyncio
     async def test_run_returns_agent_run_result(
@@ -713,17 +747,11 @@ class TestSDKRunnerRun:
 
         result_msg = MagicMock()
         result_msg.__class__ = _mock_sdk.ResultMessage
-        result_text_block = MagicMock()
-        result_text_block.text = "Final answer"
-        del result_text_block.name
-        result_msg.content = [result_text_block]
+        result_msg.result = "Final answer"
 
-        async def mock_query_iter(**kwargs):
-            yield assistant_msg
-            yield result_msg
+        _MockClaudeSDKClient._messages = [assistant_msg, result_msg]
 
-        with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
-            result = await runner.run("test message", session_key="test:session")
+        result = await runner.run("test message", session_key="test:session")
 
         assert isinstance(result, AgentRunResult)
         assert "Final answer" in result.response
@@ -743,17 +771,11 @@ class TestSDKRunnerRun:
 
         result_msg = MagicMock()
         result_msg.__class__ = _mock_sdk.ResultMessage
-        result_text_block = MagicMock()
-        result_text_block.text = "Done"
-        del result_text_block.name
-        result_msg.content = [result_text_block]
+        result_msg.result = "Done"
 
-        async def mock_query_iter(**kwargs):
-            yield assistant_msg
-            yield result_msg
+        _MockClaudeSDKClient._messages = [assistant_msg, result_msg]
 
-        with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
-            result = await runner.run("test message", session_key="test:session")
+        result = await runner.run("test message", session_key="test:session")
 
         assert "read_file" in result.tool_calls_made
 
@@ -765,16 +787,11 @@ class TestSDKRunnerRun:
 
         result_msg = MagicMock()
         result_msg.__class__ = _mock_sdk.ResultMessage
-        result_text_block = MagicMock()
-        result_text_block.text = "Response text"
-        del result_text_block.name
-        result_msg.content = [result_text_block]
+        result_msg.result = "Response text"
 
-        async def mock_query_iter(**kwargs):
-            yield result_msg
+        _MockClaudeSDKClient._messages = [result_msg]
 
-        with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
-            await runner.run("user question", session_key="test:session")
+        await runner.run("user question", session_key="test:session")
 
         assert mock_memory_mgr.append_history.call_count == 2
 
@@ -786,21 +803,22 @@ class TestSDKRunnerRun:
 
         result_msg = MagicMock()
         result_msg.__class__ = _mock_sdk.ResultMessage
-        result_text_block = MagicMock()
-        result_text_block.text = "ok"
-        del result_text_block.name
-        result_msg.content = [result_text_block]
+        result_msg.result = "ok"
 
-        captured_kwargs = {}
+        _MockClaudeSDKClient._messages = [result_msg]
 
-        async def mock_query_iter(**kwargs):
-            captured_kwargs.update(kwargs)
-            yield result_msg
+        captured_options = {}
 
-        with patch("grip.engines.sdk_engine.query", side_effect=mock_query_iter):
+        original_init = _MockClaudeSDKClient.__init__
+
+        def capturing_init(self_client, options=None):
+            captured_options["options"] = options
+            original_init(self_client, options)
+
+        with patch.object(_MockClaudeSDKClient, "__init__", capturing_init):
             await runner.run("test", session_key="s", model="claude-opus-4-6")
 
-        assert captured_kwargs.get("options") is not None
+        assert captured_options.get("options") is not None
 
 
 # ---------------------------------------------------------------------------

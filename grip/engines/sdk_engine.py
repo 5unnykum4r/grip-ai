@@ -1,4 +1,4 @@
-"""SDKRunner — EngineProtocol implementation using claude_agent_sdk.query().
+"""SDKRunner — EngineProtocol implementation using ClaudeSDKClient.
 
 This is the PRIMARY engine for Claude models. It delegates all tool execution,
 agentic looping, and context management to the Claude Agent SDK. Grip handles:
@@ -6,6 +6,9 @@ agentic looping, and context management to the Claude Agent SDK. Grip handles:
   - Custom tools (send_message, send_file, remember, recall)
   - MCP server config translation from grip format to SDK format
   - History persistence via MemoryManager
+
+Uses ClaudeSDKClient (not query()) because custom tools created with the
+@tool decorator require the client — query() does not support them.
 """
 
 from __future__ import annotations
@@ -15,24 +18,19 @@ import inspect
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
+    CLIConnectionError,
     ResultMessage,
     create_sdk_mcp_server,
-    query,
     tool,
 )
 from loguru import logger
 
-from grip.engines.sdk_hooks import (
-    build_post_tool_use_hook,
-    build_pre_tool_use_hook,
-    build_stop_hook,
-)
 from grip.engines.types import AgentRunResult, EngineProtocol
 from grip.skills.loader import SkillsLoader
 
@@ -46,7 +44,7 @@ if TYPE_CHECKING:
 
 
 class SDKRunner(EngineProtocol):
-    """EngineProtocol implementation that uses claude_agent_sdk.query() for agentic runs.
+    """EngineProtocol implementation that uses ClaudeSDKClient for agentic runs.
 
     Unlike LiteLLMRunner (which wraps the internal AgentLoop), SDKRunner delegates
     the full agent loop to the Claude Agent SDK. Grip only provides the system
@@ -142,7 +140,9 @@ class SDKRunner(EngineProtocol):
 
     # -- System prompt assembly --
 
-    def _build_system_prompt(self, user_message: str, session_key: str) -> str:
+    def _build_system_prompt(
+        self, user_message: str, session_key: str, custom_tools: list | None = None,
+    ) -> str:
         """Assemble the system prompt from identity files, memory, skills, and metadata.
 
         Parts are joined with markdown horizontal rules for clear separation.
@@ -172,6 +172,20 @@ class SDKRunner(EngineProtocol):
             kb_context = self._kb.export_for_context(max_chars=800)
             if kb_context:
                 parts.append(f"## Learned Patterns\n\n{kb_context}")
+
+        # List custom tools so the agent knows what it can call
+        if custom_tools:
+            tool_lines = [
+                f"- **{t.name}**: {t.description}" for t in custom_tools
+                if hasattr(t, "name") and hasattr(t, "description")
+            ]
+            if tool_lines:
+                parts.append(
+                    "## Available Tools\n\n"
+                    "Use these tools to fulfil requests — prefer live tool "
+                    "calls over cached memory when the user asks for real-time data.\n\n"
+                    + "\n".join(tool_lines)
+                )
 
         # Load available skills and list their names + descriptions
         try:
@@ -310,11 +324,11 @@ class SDKRunner(EngineProtocol):
     ) -> AgentRunResult:
         """Send a user message through the Claude Agent SDK and return the result.
 
-        Streams messages from claude_agent_sdk.query(), collecting assistant text
+        Uses ClaudeSDKClient to run the agent loop, collecting the final result
         and tool call names. Persists the exchange to history via MemoryManager.
         """
-        system_prompt = self._build_system_prompt(user_message, session_key)
         custom_tools = self._build_custom_tools()
+        system_prompt = self._build_system_prompt(user_message, session_key, custom_tools)
         mcp_config = self._build_mcp_config()
         allowed_tools = self._collect_allowed_tools()
 
@@ -329,15 +343,16 @@ class SDKRunner(EngineProtocol):
         mcp_servers: dict[str, Any] = {srv["name"]: srv for srv in mcp_config}
         mcp_servers["grip_tools"] = grip_server
 
-        # Ensure the custom tool names are in allowed_tools so the SDK permits them
-        custom_tool_names = [t.name for t in custom_tools]
+        # Ensure the custom tool names are in allowed_tools so the SDK permits
+        # them.  SDK MCP tools follow the mcp__<server_key>__<tool> convention.
+        custom_tool_names = [f"mcp__grip_tools__{t.name}" for t in custom_tools]
         allowed_tools.extend(custom_tool_names)
 
-        pre_hook = build_pre_tool_use_hook(Path(self._cwd), self._trust_mgr)
-        post_hook = build_post_tool_use_hook()
-        stop_hook = build_stop_hook(self._memory_mgr)
-
-        env_opts: dict[str, str] = {}
+        env_opts: dict[str, str] = {
+            # Prevent the Claude CLI from refusing to start when grip is
+            # invoked from inside a Claude Code session (nested session guard).
+            "CLAUDECODE": "",
+        }
         if self._api_key:
             env_opts["ANTHROPIC_API_KEY"] = self._api_key
         tool_search = self._config.tools.enable_tool_search
@@ -352,29 +367,39 @@ class SDKRunner(EngineProtocol):
             cwd=self._cwd,
             allowed_tools=allowed_tools if allowed_tools else None,
             env=env_opts if env_opts else None,
-            hooks={
-                "PreToolUse": pre_hook,
-                "PostToolUse": post_hook,
-                "Stop": stop_hook,
-            },
         )
 
-        response_parts: list[str] = []
         tool_calls_made: list[str] = []
+        result_text: str | None = None
 
-        async for message in query(prompt=user_message, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in getattr(message, "content", []):
-                    if hasattr(block, "text"):
-                        response_parts.append(block.text)
-                    if hasattr(block, "name"):
-                        tool_calls_made.append(block.name)
-            elif isinstance(message, ResultMessage):
-                for block in getattr(message, "content", []):
-                    if hasattr(block, "text"):
-                        response_parts.append(block.text)
+        try:
+            # ClaudeSDKClient supports custom tools (via @tool / SDK MCP
+            # servers), hooks, and multi-turn conversations.  The simpler
+            # query() function does NOT support custom tools.
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(user_message)
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in getattr(message, "content", []):
+                            if hasattr(block, "name"):
+                                tool_calls_made.append(block.name)
+                    elif isinstance(message, ResultMessage):
+                        # ResultMessage.result is the authoritative final
+                        # response.  AssistantMessage text blocks duplicate it,
+                        # so we only use ResultMessage to avoid printing twice.
+                        if getattr(message, "result", None):
+                            result_text = message.result
+        except ExceptionGroup as eg:
+            # The SDK may raise CLIConnectionError wrapped in an ExceptionGroup
+            # during query cleanup when the CLI subprocess exits before the
+            # transport finishes writing a control response. This is a known
+            # race condition — the response was already collected above.
+            _cli_errors, rest = eg.split(CLIConnectionError)
+            if rest:
+                raise rest from eg
+            logger.debug("Suppressed CLIConnectionError during query cleanup: {}", eg)
 
-        response_text = "\n".join(response_parts) if response_parts else ""
+        response_text = result_text or ""
 
         # Persist user message and agent response to conversation history
         self._memory_mgr.append_history(f"User ({session_key}): {user_message[:200]}")
