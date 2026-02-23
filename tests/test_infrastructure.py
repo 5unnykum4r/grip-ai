@@ -14,8 +14,9 @@ from grip.pool import get_http_pool, get_provider_pool, shutdown_pools
 
 
 class TestVersionConsistency:
-    def test_version_is_0_2_0(self):
-        assert grip.__version__ == "0.2.0"
+    def test_version_matches_pyproject(self):
+        from importlib.metadata import version
+        assert grip.__version__ == version("grip-ai")
 
     def test_version_is_string(self):
         assert isinstance(grip.__version__, str)
