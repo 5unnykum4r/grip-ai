@@ -276,7 +276,7 @@ def _auto_test_sdk_connection(api_key: str, model: str) -> bool:
                         options=ClaudeAgentOptions(
                             model=model,
                             allowed_tools=[],
-                            permission_mode="bypassPermissions",
+                            permission_mode="acceptEdits",
                         ),
                     ):
                         pass
