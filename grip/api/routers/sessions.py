@@ -47,8 +47,8 @@ async def get_session(
     """Get detail for a single session."""
     check_token_rate_limit(request, token)
 
-    session = session_mgr.get_or_create(key)
-    if session.message_count == 0:
+    session = session_mgr.get(key)
+    if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",

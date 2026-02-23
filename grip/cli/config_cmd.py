@@ -33,7 +33,7 @@ def _mask_secrets(obj: Any) -> Any:
         return obj
     elif isinstance(obj, dict):
         return {
-            k: _mask_secrets(v) if _is_secret_key(k) else _mask_secrets(v) for k, v in obj.items()
+            k: ("***" if _is_secret_key(k) and isinstance(v, str) and len(v) > 4 else _mask_secrets(v)) for k, v in obj.items()
         }
     elif isinstance(obj, list):
         return [_mask_secrets(item) for item in obj]

@@ -128,15 +128,18 @@ class ToolRegistry:
     Thread-safe for reads; registration is expected to happen once at startup.
     """
 
-    __slots__ = ("_tools",)
+    __slots__ = ("_tools", "_category_cache", "mcp_manager")
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._category_cache: dict[str, list[Tool]] | None = None
+        self.mcp_manager: Any = None
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
             logger.warning("Overwriting existing tool registration: {}", tool.name)
         self._tools[tool.name] = tool
+        self._category_cache = None
         logger.debug("Registered tool: {}", tool.name)
 
     def register_many(self, tools: list[Tool]) -> None:
@@ -146,6 +149,7 @@ class ToolRegistry:
     def unregister(self, name: str) -> bool:
         if name in self._tools:
             del self._tools[name]
+            self._category_cache = None
             logger.debug("Unregistered tool: {}", name)
             return True
         return False
@@ -161,10 +165,16 @@ class ToolRegistry:
         return [tool.to_definition() for tool in self._tools.values()]
 
     def get_tools_by_category(self) -> dict[str, list[Tool]]:
-        """Return registered tools grouped by category for system prompt generation."""
+        """Return registered tools grouped by category for system prompt generation.
+
+        Result is cached and invalidated on register/unregister.
+        """
+        if self._category_cache is not None:
+            return self._category_cache
         groups: dict[str, list[Tool]] = {}
         for tool in self._tools.values():
             groups.setdefault(tool.category, []).append(tool)
+        self._category_cache = groups
         return groups
 
     async def execute(self, name: str, params: dict[str, Any], ctx: ToolContext) -> str:

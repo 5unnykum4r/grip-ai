@@ -54,6 +54,7 @@ class LearningEngine(EngineProtocol):
             )
             for p in patterns:
                 self._kb.add(p.category, p.content, source=p.source, tags=p.tags)
+            self._kb.flush()
             if patterns:
                 logger.debug(
                     "Extracted {} behavioral pattern(s) from interaction",

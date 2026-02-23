@@ -16,12 +16,13 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/engine-Claude%20Agent%20SDK-blueviolet" alt="Claude Agent SDK">
+  <img src="https://img.shields.io/badge/tests-614-brightgreen" alt="614 Tests">
   <img src="https://img.shields.io/badge/providers-15-orange" alt="15 LLM Providers">
 </p>
 
 ---
 
-grip is a self-hostable AI agent platform built with Python and [uv](https://docs.astral.sh/uv/). It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, schedule cron tasks, orchestrate multi-agent workflows, and expose a secure REST API — all from a single process.
+grip is a self-hostable AI agent platform — 112 Python modules, ~19.5K lines, 614 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, schedule cron tasks, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
 
 ## Features
 
@@ -29,15 +30,46 @@ grip is a self-hostable AI agent platform built with Python and [uv](https://doc
 |----------|---------|
 | **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM fallback for non-Claude models |
 | **LLM Providers** | Anthropic (via SDK), OpenRouter, OpenAI, DeepSeek, Groq, Google Gemini, Qwen, MiniMax, Moonshot (Kimi), Ollama (Cloud), Ollama (Local), vLLM, Llama.cpp, LM Studio, and any OpenAI-compatible API |
-| **Built-in Tools** | File read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), web fetch, messaging, subagent spawning, finance (yfinance), MCP tools |
+| **Built-in Tools** | 15 tool modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, code analysis, data transforms, document generation, email composition, messaging, subagent spawning, finance (yfinance), cron scheduling, MCP tools |
 | **Chat Channels** | Telegram (bot commands, photos, documents, voice), Discord, Slack (Socket Mode) |
-| **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 21 endpoints |
+| **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 27 endpoints |
 | **Workflows** | DAG-based multi-agent orchestration with dependency resolution and parallel execution |
-| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, and semantic caching |
+| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, semantic caching, and knowledge base |
 | **Scheduling** | Cron jobs with channel delivery, heartbeat service, natural language scheduling |
-| **Skills** | 18 built-in markdown skills, workspace overrides, install/remove via CLI |
-| **Security** | Directory trust model, shell deny-list (50+ patterns), secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
+| **Skills** | 15 built-in markdown skills, workspace overrides, install/remove via CLI |
+| **Security** | Directory trust model, shell deny-list (28 patterns), SecretStr config fields, secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
 | **Observability** | OpenTelemetry tracing, in-memory metrics, crash recovery, config validation |
+
+## Architecture
+
+```
+grip gateway
+├── REST API (FastAPI :18800)          27 endpoints, bearer auth, rate limiting
+│   ├── /api/v1/chat                   blocking + SSE streaming
+│   ├── /api/v1/sessions               CRUD
+│   ├── /api/v1/tools                  list + execute
+│   ├── /api/v1/mcp                    server management + OAuth
+│   └── /api/v1/management             config, cron, skills, memory, metrics, workflows
+├── Channels
+│   ├── Telegram                       bot commands, photos, docs, voice
+│   ├── Discord                        discord.py integration
+│   └── Slack                          Socket Mode (slack-sdk)
+├── Message Bus                        asyncio.Queue decoupling channels ↔ engine
+├── Engine (pluggable)
+│   ├── SDKRunner (claude_sdk)         Claude Agent SDK — full agentic loop
+│   └── LiteLLMRunner (litellm)        any model via LiteLLM + grip's AgentLoop
+├── Tool Registry                      15 modules (filesystem, shell, web, research, ...)
+├── MCP Manager                        stdio + HTTP/SSE servers, OAuth 2.0 + PKCE
+├── Memory
+│   ├── MEMORY.md                      durable facts (TF-IDF search, Jaccard dedup)
+│   ├── HISTORY.md                     timestamped summaries (time-decay search)
+│   ├── SemanticCache                  SHA-256 keyed response cache with TTL
+│   └── KnowledgeBase                  structured typed facts
+├── Session Manager                    per-key JSON files, LRU cache (200)
+├── Cron Service                       croniter schedules, channel delivery
+├── Heartbeat Service                  periodic autonomous agent wake-up
+└── Workflow Engine                    DAG execution with topological parallelism
+```
 
 ## Engine Modes
 
@@ -354,7 +386,7 @@ grip mcp list
 grip mcp remove excalidraw
 ```
 
-### Available Presets
+### Available Presets (14)
 
 | Name | Type | Description |
 |------|------|-------------|
@@ -369,6 +401,9 @@ grip mcp remove excalidraw
 | `sqlite` | stdio | SQLite database |
 | `fetch` | stdio | HTTP fetching |
 | `puppeteer` | stdio | Browser automation |
+| `stack` | stdio | Stack Overflow Q&A |
+| `tomba` | stdio | Email finder (Tomba.io) |
+| `supabase` | HTTP | Supabase database + auth |
 
 Set API keys for presets that require them:
 
@@ -470,6 +505,12 @@ All `/api/v1/*` endpoints require `Authorization: Bearer <token>`.
 | GET | `/api/v1/memory/search?q=...` | Search HISTORY.md |
 | GET | `/api/v1/workflows` | List workflows |
 | GET | `/api/v1/workflows/{name}` | Workflow detail |
+| GET | `/api/v1/mcp/servers` | List MCP servers with status |
+| GET | `/api/v1/mcp/{server}/status` | Single server status |
+| POST | `/api/v1/mcp/{server}/login` | Start OAuth flow |
+| GET | `/api/v1/mcp/callback` | OAuth redirect handler (no auth) |
+| POST | `/api/v1/mcp/{server}/enable` | Enable a server |
+| POST | `/api/v1/mcp/{server}/disable` | Disable a server |
 
 ### Example Requests
 
@@ -502,6 +543,7 @@ The API is designed for safe self-hosting:
 - **Directory Trust Model** — grip is restricted to its workspace by default. Access to external directories must be explicitly granted via CLI prompt or the `/trust` command. [Learn more](#security-architecture).
 - **Shell Safety Guards** — every shell command is scanned against a comprehensive deny-list (rm -rf /, shutdown, etc.) before execution. [Learn more](#security-architecture).
 - **Shield Policy** — context-based runtime threat feed injected into the system prompt. Evaluates tool calls, skill execution, MCP interactions, network requests, and secret access against active threats. [Learn more](#security-architecture).
+- **SecretStr config fields** — API keys and tokens use Pydantic `SecretStr`, automatically masked in logs and `repr()` output
 - **Sanitized errors** — no stack traces or file paths in responses
 - **Tool execute gated** — disabled by default to prevent arbitrary command execution over HTTP
 - **No config mutation over HTTP** — prevents redirect attacks
@@ -566,7 +608,7 @@ Every command the agent tries to run via the `exec` tool is scanned against a ro
 
 ## Docker
 
-Grip is Docker-ready and can be configured entirely via environment variables. The Dockerfile includes Node.js (required by the Claude Agent SDK).
+Grip is Docker-ready and can be configured entirely via environment variables. The Dockerfile includes Node.js (required by the Claude Agent SDK) and runs as non-root user `grip` (UID 1000).
 
 ```bash
 # Build from source
@@ -578,7 +620,7 @@ docker run -d \
   -e ANTHROPIC_API_KEY="sk-ant-..." \
   -e GRIP_CHANNELS__TELEGRAM__ENABLED="true" \
   -e GRIP_CHANNELS__TELEGRAM__TOKEN="bot-token" \
-  -v ~/.grip:/root/.grip \
+  -v ~/.grip:/home/grip/.grip \
   --name grip-agent \
   grip
 
@@ -589,7 +631,7 @@ docker run -d \
   -e GRIP_PROVIDERS__OPENAI__API_KEY="sk-..." \
   -e GRIP_CHANNELS__TELEGRAM__ENABLED="true" \
   -e GRIP_CHANNELS__TELEGRAM__TOKEN="bot-token" \
-  -v ~/.grip:/root/.grip \
+  -v ~/.grip:/home/grip/.grip \
   --name grip-agent \
   grip
 ```
@@ -602,26 +644,23 @@ Grip supports `GRIP_` prefixed variables for any config value. Use `__` for nest
 
 ## Built-in Skills
 
-| Skill | Description |
-|-------|-------------|
-| `cron` | Schedule tasks, reminders, and recurring jobs |
-| `github` | PR generation, code review, git workflows |
-| `debug` | Bug finding, git blame, bisect, time-travel debugging |
-| `code-review` | Automated code review and quality analysis |
-| `code-loader` | AST-aware chunking for loading relevant code |
-| `codebase-mapper` | Dependency graphs, import mapping, ripple analysis |
-| `web-researcher` | Web research with source citation |
-| `project-planner` | Project planning and task breakdown |
-| `data-viz` | ASCII charts and data visualization in terminal |
-| `memory` | Long-term memory management |
-| `temporal-memory` | Time-aware reminders and deadline tracking |
-| `summarize` | Text and conversation summarization |
-| `self-analyzer` | Performance and architecture analysis |
-| `skill-creator` | Create new skills |
-| `optimization-rules` | Token efficiency and tool selection guidance |
-| `yfinance` | Stock market data and analysis |
-| `tmux` | Terminal multiplexer management |
-| `tweet-writer` | Social media content drafting |
+| Skill | Description | Always Loaded |
+|-------|-------------|:---:|
+| `code-review` | Automated code review and quality analysis | Yes |
+| `optimization-rules` | Token efficiency and tool selection guidance | Yes |
+| `code-loader` | AST-aware chunking for loading relevant code | |
+| `codebase-mapper` | Dependency graphs, import mapping, ripple analysis | |
+| `data-viz` | ASCII charts and data visualization in terminal | |
+| `debug` | Bug finding, git blame, bisect, time-travel debugging | |
+| `github` | PR generation, code review, git workflows | |
+| `memory` | Long-term memory management | |
+| `project-planner` | Project planning and task breakdown | |
+| `self-analyzer` | Performance and architecture analysis | |
+| `skill-creator` | Create new skills | |
+| `summarize` | Text and conversation summarization | |
+| `temporal-memory` | Time-aware reminders and deadline tracking | |
+| `tmux` | Terminal multiplexer management | |
+| `tweet-writer` | Social media content drafting | |
 
 ## Development
 
@@ -632,15 +671,32 @@ uv sync --group dev
 # Run linter
 uv run ruff check grip/ tests/
 
-# Run tests
+# Run tests (614 tests across 50 test files)
 uv run pytest
 
 # Run tests with coverage
 uv run pytest --cov=grip
 
+# Run specific test module
+uv run pytest tests/memory/ -v
+
 # Build package
 uv build
 ```
+
+### Project Stats
+
+| Metric | Count |
+|--------|-------|
+| Python source files | 112 |
+| Lines of code | ~19,500 |
+| Test files | 50 |
+| Tests | 614 |
+| Built-in tools | 15 modules |
+| Built-in skills | 15 |
+| LLM providers | 15 |
+| API endpoints | 27 |
+| CLI commands | 11 groups + 14 interactive slash commands |
 
 ## Contributing
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from grip.config.schema import GripConfig
+from loguru import logger
+
+from grip.config.schema import GripConfig, MCPServerConfig
 
 _DEFAULT_CONFIG_DIR = Path.home() / ".grip"
 _DEFAULT_CONFIG_FILE = _DEFAULT_CONFIG_DIR / "config.json"
@@ -55,6 +57,30 @@ def save_config(config: GripConfig, path: Path | None = None) -> Path:
     tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp_path.rename(config_path)
     return config_path
+
+
+def load_mcp_json(search_dir: Path) -> dict[str, MCPServerConfig]:
+    """Load MCP servers from a .mcp.json file following the Claude Agent SDK convention.
+
+    Expected format: {"mcpServers": {"name": {"command": "...", "args": [...]}}}
+    Returns an empty dict if the file is missing or malformed.
+    """
+    mcp_path = search_dir / ".mcp.json"
+    if not mcp_path.exists():
+        return {}
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+        raw_servers = data.get("mcpServers", {})
+        result: dict[str, MCPServerConfig] = {}
+        for name, srv_data in raw_servers.items():
+            if isinstance(srv_data, dict):
+                result[name] = MCPServerConfig(**srv_data)
+        if result:
+            logger.debug("Loaded {} MCP server(s) from {}", len(result), mcp_path)
+        return result
+    except Exception as exc:
+        logger.warning("Failed to parse {}: {}", mcp_path, exc)
+        return {}
 
 
 def _strip_empty_providers(data: dict) -> None:

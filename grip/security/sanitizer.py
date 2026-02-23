@@ -28,7 +28,7 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Twilio key", re.compile(r"SK[a-f0-9]{32}")),
     ("Mailgun key", re.compile(r"key-[a-f0-9]{32}")),
     ("SendGrid key", re.compile(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}")),
-    ("Heroku API key", re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")),
+    ("Heroku API key", re.compile(r"(?i)(?:heroku|HEROKU).{0,20}[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")),
     ("grip token", re.compile(r"grip_[A-Za-z0-9_-]{20,}")),
     # Generic patterns
     ("Bearer token in header", re.compile(r"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*")),
@@ -42,6 +42,12 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"(?i)(api[_-]?key|api[_-]?secret|auth[_-]?token|secret[_-]?key|"
             r"access[_-]?token|private[_-]?key|password)\s*[=:]\s*['\"]?[A-Za-z0-9+/=_\-]{16,}['\"]?"
+        ),
+    ),
+    (
+        "OAuth refresh token",
+        re.compile(
+            r"(?i)refresh_token\s*[=:]\s*['\"]?[A-Za-z0-9+/=_\-]{16,}['\"]?"
         ),
     ),
 ]

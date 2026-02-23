@@ -125,6 +125,8 @@ class SkillsLoader:
         self._workspace_skills_dir.mkdir(parents=True, exist_ok=True)
         if not filename.endswith(".md"):
             filename = f"{filename}.md"
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise ValueError(f"Invalid skill filename: {filename!r}")
         target = self._workspace_skills_dir / filename
         target.write_text(content, encoding="utf-8")
         logger.info("Skill installed: {}", target)

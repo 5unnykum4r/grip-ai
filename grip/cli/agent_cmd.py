@@ -150,24 +150,68 @@ def _ensure_workspace(config: GripConfig) -> WorkspaceManager:
     return ws
 
 
+def _get_engine_registry(engine: EngineProtocol):
+    """Walk the engine wrapper chain to find the ToolRegistry.
+
+    The engine may be wrapped in TrackedEngine → LearningEngine → LiteLLMRunner.
+    Each wrapper stores the inner engine as ``_inner``. The LiteLLMRunner stores
+    the ToolRegistry as ``_registry`` (also exposed via ``.registry``).
+    Returns None for SDKRunner which has no grip ToolRegistry.
+    """
+    current = engine
+    for _ in range(10):
+        registry = getattr(current, "_registry", None) or getattr(current, "registry", None)
+        if registry is not None:
+            return registry
+        inner = getattr(current, "_inner", None)
+        if inner is None:
+            break
+        current = inner
+    return None
+
+
+def _get_mcp_manager(engine: EngineProtocol):
+    """Walk the engine wrapper chain to find the MCPManager from the registry."""
+    registry = _get_engine_registry(engine)
+    return getattr(registry, "mcp_manager", None) if registry else None
+
+
 def _build_engine(config: GripConfig) -> tuple[EngineProtocol, SessionManager, MemoryManager]:
-    """Wire up the engine stack from config using the engine factory."""
+    """Wire up the engine stack from config using the engine factory.
+
+    TOOLS.md is generated from the actual engine's tools:
+    - LiteLLM engine: uses the engine's ToolRegistry (all built-in grip tools)
+    - Claude SDK engine: lists only grip's custom tools (send_message, etc.)
+      since the SDK provides its own built-in tools
+    """
     ws = _ensure_workspace(config)
     session_mgr = SessionManager(ws.root / "sessions")
     memory_mgr = MemoryManager(ws.root)
 
-    from grip.skills.loader import SkillsLoader
-    from grip.tools import create_default_registry
-    from grip.tools.docs import generate_tools_md
+    engine = create_engine(config, ws, session_mgr, memory_mgr)
 
-    mcp_servers = config.tools.mcp_servers
-    registry = create_default_registry(mcp_servers=mcp_servers)
+    from grip.skills.loader import SkillsLoader
+
     loader = SkillsLoader(ws.root)
     loader.scan()
-    tools_md = generate_tools_md(registry, loader.list_skills(), config.tools.mcp_servers)
+
+    engine_type = config.agents.defaults.engine
+    if engine_type == "claude_sdk":
+        from grip.tools.docs import generate_sdk_tools_md
+
+        tools_md = generate_sdk_tools_md(loader.list_skills(), config.tools.mcp_servers)
+    else:
+        from grip.tools.docs import generate_tools_md
+
+        registry = _get_engine_registry(engine)
+        if registry is None:
+            from grip.tools import create_default_registry
+
+            registry = create_default_registry()
+        tools_md = generate_tools_md(registry, loader.list_skills(), config.tools.mcp_servers)
+
     (ws.root / "TOOLS.md").write_text(tools_md, encoding="utf-8")
 
-    engine = create_engine(config, ws, session_mgr, memory_mgr)
     return engine, session_mgr, memory_mgr
 
 
@@ -310,7 +354,7 @@ def _print_doctor(
 
     provider_key_name = active_model.split("/")[0] if "/" in active_model else ""
     provider_cfg = config.providers.get(provider_key_name)
-    if provider_cfg and provider_cfg.api_key:
+    if provider_cfg and provider_cfg.api_key.get_secret_value():
         checks.append((f"Provider '{provider_name}' API key", True, ""))
     elif provider_key_name:
         checks.append((f"Provider '{provider_name}' API key", False, "May be set via env var"))
@@ -324,7 +368,7 @@ def _print_doctor(
 
     # MCP servers
     mcp_count = len(config.tools.mcp_servers)
-    checks.append((f"MCP servers ({mcp_count})", mcp_count > 0 or True, ""))
+    checks.append((f"MCP servers ({mcp_count})", mcp_count > 0, ""))
 
     # Session state
     session = session_mgr.get_or_create(session_key)
@@ -388,6 +432,7 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
     from prompt_toolkit import PromptSession
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.patch_stdout import patch_stdout
 
     engine, session_mgr, memory_mgr = _build_engine(config)
     session_key = _SESSION_KEY
@@ -410,218 +455,223 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
         short = _short_model_name(model or config.agents.defaults.model)
         return HTML(f"\n<b>grip</b> <style fg='ansibrightcyan'>({short})</style><b>&gt;</b> ")
 
-    while True:
+    with patch_stdout(raw=True):
+        # patch_stdout(raw=True) replaces sys.stdout with a proxy that
+        # renders output above the prompt and passes ANSI codes through.
+        # Loguru normally writes to stderr (unpatched), so we redirect it
+        # to the patched stdout for the duration of the interactive session.
+        from grip.logging import reconfigure_console_sink
+
+        reconfigure_console_sink(interactive=True)
         try:
-            user_input = await asyncio.to_thread(prompt_session.prompt, _make_prompt())
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye![/dim]")
-            break
-
-        user_input = user_input.strip()
-        if not user_input:
-            continue
-
-        # Slash commands
-        if user_input.startswith("/"):
-            cmd = user_input.lower().split()[0]
-            args_parts = user_input.split()[1:]
-            args_str = user_input[len(cmd) :].strip()
-
-            if cmd in ("/exit", "/quit", "/q"):
-                console.print("[dim]Goodbye![/dim]")
-                break
-
-            elif cmd == "/new":
-                await engine.reset_session(session_key)
-                session_key = _SESSION_KEY
-                console.clear()
-                _print_welcome(config, model)
-                console.print("[green]New session started.[/green]")
-                continue
-
-            elif cmd == "/clear":
-                session = session_mgr.get_or_create(session_key)
-                count = session.message_count
-                session.messages.clear()
-                session.summary = None
-                session_mgr.save(session)
-                console.clear()
-                _print_welcome(config, model)
-                console.print(f"[green]Cleared {count} messages.[/green]")
-                continue
-
-            elif cmd == "/undo":
-                session = session_mgr.get_or_create(session_key)
-                if session.message_count < 2:
-                    console.print("[yellow]Nothing to undo.[/yellow]")
-                    continue
-                session.messages = session.messages[:-2]
-                session_mgr.save(session)
-                console.print("[green]Last exchange removed.[/green]")
-                continue
-
-            elif cmd == "/rewind":
+            while True:
                 try:
-                    n = int(args_parts[0]) if args_parts else 1
-                except ValueError:
-                    console.print("[yellow]Usage: /rewind N (e.g. /rewind 3)[/yellow]")
-                    continue
-                session = session_mgr.get_or_create(session_key)
-                to_remove = n * 2
-                if session.message_count < to_remove:
-                    console.print(
-                        f"[yellow]Session only has {session.message_count // 2} "
-                        f"exchange(s), cannot rewind {n}.[/yellow]"
-                    )
-                    continue
-                session.messages = session.messages[:-to_remove]
-                session_mgr.save(session)
-                console.print(f"[green]Rewound {n} exchange(s).[/green]")
-                continue
+                    user_input = await asyncio.to_thread(prompt_session.prompt, _make_prompt())
+                except (EOFError, KeyboardInterrupt):
+                    console.print("\n[dim]Goodbye![/dim]")
+                    break
 
-            elif cmd == "/compact":
-                session = session_mgr.get_or_create(session_key)
-                if session.message_count < 4:
-                    console.print("[yellow]Session too short to compact.[/yellow]")
+                user_input = user_input.strip()
+                if not user_input:
                     continue
-                old_count = session.message_count
-                with Live(
-                    Spinner("dots", text="Compacting session..."),
-                    console=console,
-                    transient=True,
-                ):
-                    await engine.consolidate_session(session_key)
 
-                session = session_mgr.get_or_create(session_key)
-                console.clear()
-                _print_welcome(config, model)
-                console.print(
-                    f"[green]Session compacted: {old_count} -> {session.message_count} messages.[/green]"
-                )
-                if session.summary:
-                    console.print(
-                        Panel(
-                            session.summary,
-                            title="[bold]Conversation Summary[/bold]",
-                            expand=False,
-                            border_style="dim",
+                # Slash commands
+                if user_input.startswith("/"):
+                    cmd = user_input.lower().split()[0]
+                    args_parts = user_input.split()[1:]
+                    args_str = user_input[len(cmd) :].strip()
+
+                    if cmd in ("/exit", "/quit", "/q"):
+                        console.print("[dim]Goodbye![/dim]")
+                        break
+
+                    elif cmd == "/new":
+                        await engine.reset_session(session_key)
+                        session_key = _SESSION_KEY
+                        console.clear()
+                        _print_welcome(config, model)
+                        console.print("[green]New session started.[/green]")
+                        continue
+
+                    elif cmd == "/clear":
+                        session = session_mgr.get_or_create(session_key)
+                        count = session.message_count
+                        session.messages.clear()
+                        session.summary = None
+                        session_mgr.save(session)
+                        console.clear()
+                        _print_welcome(config, model)
+                        console.print(f"[green]Cleared {count} messages.[/green]")
+                        continue
+
+                    elif cmd == "/undo":
+                        session = session_mgr.get_or_create(session_key)
+                        if session.message_count < 2:
+                            console.print("[yellow]Nothing to undo.[/yellow]")
+                            continue
+                        session.messages = session.messages[:-2]
+                        session_mgr.save(session)
+                        console.print("[green]Last exchange removed.[/green]")
+                        continue
+
+                    elif cmd == "/rewind":
+                        try:
+                            n = int(args_parts[0]) if args_parts else 1
+                        except ValueError:
+                            console.print("[yellow]Usage: /rewind N (e.g. /rewind 3)[/yellow]")
+                            continue
+                        session = session_mgr.get_or_create(session_key)
+                        to_remove = n * 2
+                        if session.message_count < to_remove:
+                            console.print(
+                                f"[yellow]Session only has {session.message_count // 2} "
+                                f"exchange(s), cannot rewind {n}.[/yellow]"
+                            )
+                            continue
+                        session.messages = session.messages[:-to_remove]
+                        session_mgr.save(session)
+                        console.print(f"[green]Rewound {n} exchange(s).[/green]")
+                        continue
+
+                    elif cmd == "/compact":
+                        session = session_mgr.get_or_create(session_key)
+                        if session.message_count < 4:
+                            console.print("[yellow]Session too short to compact.[/yellow]")
+                            continue
+                        old_count = session.message_count
+                        with Live(
+                            Spinner("dots", text="Compacting session..."),
+                            console=console,
+                            transient=True,
+                        ):
+                            await engine.consolidate_session(session_key)
+
+                        session = session_mgr.get_or_create(session_key)
+                        console.clear()
+                        _print_welcome(config, model)
+                        console.print(
+                            f"[green]Session compacted: {old_count} -> {session.message_count} messages.[/green]"
                         )
-                    )
-                continue
+                        if session.summary:
+                            console.print(
+                                Panel(
+                                    session.summary,
+                                    title="[bold]Conversation Summary[/bold]",
+                                    expand=False,
+                                    border_style="dim",
+                                )
+                            )
+                        continue
 
-            elif cmd == "/copy":
-                session = session_mgr.get_or_create(session_key)
-                last_assistant = next(
-                    (m.content for m in reversed(session.messages) if m.role == "assistant"),
-                    None,
-                )
-                if not last_assistant:
-                    console.print("[yellow]No assistant response to copy.[/yellow]")
-                    continue
-                import subprocess as _sp
+                    elif cmd == "/copy":
+                        session = session_mgr.get_or_create(session_key)
+                        last_assistant = next(
+                            (m.content for m in reversed(session.messages) if m.role == "assistant"),
+                            None,
+                        )
+                        if not last_assistant:
+                            console.print("[yellow]No assistant response to copy.[/yellow]")
+                            continue
+                        import subprocess as _sp
 
-                os_name = config.platform.os
-                try:
-                    if os_name == "darwin":
-                        _sp.run(["pbcopy"], input=last_assistant.encode(), check=True)
-                    elif os_name == "windows":
-                        _sp.run(["clip"], input=last_assistant.encode(), check=True)
+                        os_name = config.platform.os
+                        try:
+                            if os_name == "darwin":
+                                _sp.run(["pbcopy"], input=last_assistant.encode(), check=True)
+                            elif os_name == "windows":
+                                _sp.run(["clip"], input=last_assistant.encode(), check=True)
+                            else:
+                                _sp.run(
+                                    ["xclip", "-selection", "clipboard"],
+                                    input=last_assistant.encode(),
+                                    check=True,
+                                )
+                            console.print("[green]Copied last response to clipboard.[/green]")
+                        except FileNotFoundError:
+                            console.print(
+                                "[red]Clipboard tool not found. "
+                                "Install xclip (Linux) or use macOS/Windows.[/red]"
+                            )
+                        except _sp.CalledProcessError as exc:
+                            console.print(f"[red]Clipboard error: {exc}[/red]")
+                        continue
+
+                    elif cmd == "/model":
+                        if args_str:
+                            model = args_str
+                            provider_name, bare = _resolve_provider_display(model, config)
+                            console.print(
+                                f"[green]Model switched to [cyan]{bare}[/cyan] "
+                                f"via [white]{provider_name}[/white][/green]"
+                            )
+                        else:
+                            _print_model_info(model, config)
+                        continue
+
+                    elif cmd == "/provider":
+                        _print_model_info(model, config)
+                        continue
+
+                    elif cmd == "/doctor":
+                        _print_doctor(session_key, session_mgr, model, config)
+                        continue
+
+                    elif cmd == "/mcp":
+                        from grip.cli.app import state as app_state
+                        from grip.cli.mcp_interactive import interactive_mcp
+
+                        mcp_mgr = _get_mcp_manager(engine)
+                        await interactive_mcp(
+                            config,
+                            mcp_manager=mcp_mgr,
+                            config_path=app_state.config_path,
+                        )
+                        continue
+
+                    elif cmd == "/tasks":
+                        ws_path = config.agents.defaults.workspace.expanduser().resolve()
+                        cron_dir = ws_path / "cron"
+                        if not cron_dir.exists() or not any(cron_dir.iterdir()):
+                            console.print("[dim]No scheduled tasks found.[/dim]")
+                            continue
+                        lines = []
+                        for f in sorted(cron_dir.iterdir()):
+                            if f.is_file():
+                                lines.append(f"  [cyan]{f.stem}[/cyan]  {f.suffix}")
+                        console.print(
+                            Panel(
+                                "\n".join(lines),
+                                title="[bold]Scheduled Tasks[/bold]",
+                                expand=False,
+                                border_style="dim",
+                            )
+                        )
+                        continue
+
+                    elif cmd == "/status":
+                        _print_status(session_key, session_mgr, memory_mgr, model, config)
+                        continue
+
+                    elif cmd == "/help":
+                        _print_help()
+                        continue
+
                     else:
-                        _sp.run(
-                            ["xclip", "-selection", "clipboard"],
-                            input=last_assistant.encode(),
-                            check=True,
-                        )
-                    console.print("[green]Copied last response to clipboard.[/green]")
-                except FileNotFoundError:
-                    console.print(
-                        "[red]Clipboard tool not found. "
-                        "Install xclip (Linux) or use macOS/Windows.[/red]"
-                    )
-                except _sp.CalledProcessError as exc:
-                    console.print(f"[red]Clipboard error: {exc}[/red]")
-                continue
+                        console.print(f"[yellow]Unknown command: {cmd}. Type /help for commands.[/yellow]")
+                        continue
 
-            elif cmd == "/model":
-                if args_str:
-                    model = args_str
-                    provider_name, bare = _resolve_provider_display(model, config)
-                    console.print(
-                        f"[green]Model switched to [cyan]{bare}[/cyan] "
-                        f"via [white]{provider_name}[/white][/green]"
-                    )
-                else:
-                    _print_model_info(model, config)
-                continue
+                # Run the agent
+                with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
+                    try:
+                        result = await engine.run(user_input, session_key=session_key, model=model)
+                    except Exception as exc:
+                        console.print(f"[red]Error: {exc}[/red]")
+                        logger.exception("Agent run failed")
+                        continue
 
-            elif cmd == "/provider":
-                _print_model_info(model, config)
-                continue
-
-            elif cmd == "/doctor":
-                _print_doctor(session_key, session_mgr, model, config)
-                continue
-
-            elif cmd == "/mcp":
-                servers = config.tools.mcp_servers
-                if not servers:
-                    console.print("[dim]No MCP servers configured.[/dim]")
-                    continue
-                lines = []
-                for name, srv in servers.items():
-                    transport = srv.url if srv.url else f"{srv.command} {' '.join(srv.args)}"
-                    lines.append(f"  [cyan]{name}[/cyan]  {transport}")
-                console.print(
-                    Panel(
-                        "\n".join(lines),
-                        title="[bold]MCP Servers[/bold]",
-                        expand=False,
-                        border_style="dim",
-                    )
-                )
-                continue
-
-            elif cmd == "/tasks":
-                ws_path = config.agents.defaults.workspace.expanduser().resolve()
-                cron_dir = ws_path / "cron"
-                if not cron_dir.exists() or not any(cron_dir.iterdir()):
-                    console.print("[dim]No scheduled tasks found.[/dim]")
-                    continue
-                lines = []
-                for f in sorted(cron_dir.iterdir()):
-                    if f.is_file():
-                        lines.append(f"  [cyan]{f.stem}[/cyan]  {f.suffix}")
-                console.print(
-                    Panel(
-                        "\n".join(lines),
-                        title="[bold]Scheduled Tasks[/bold]",
-                        expand=False,
-                        border_style="dim",
-                    )
-                )
-                continue
-
-            elif cmd == "/status":
-                _print_status(session_key, session_mgr, memory_mgr, model, config)
-                continue
-
-            elif cmd == "/help":
-                _print_help()
-                continue
-
-            else:
-                console.print(f"[yellow]Unknown command: {cmd}. Type /help for commands.[/yellow]")
-                continue
-
-        # Run the agent
-        with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
-            try:
-                result = await engine.run(user_input, session_key=session_key, model=model)
-            except Exception as exc:
-                console.print(f"[red]Error: {exc}[/red]")
-                logger.exception("Agent run failed")
-                continue
-
-        console.print()
-        _print_response(result.response, no_markdown)
-        _print_stats(result)
+                console.print()
+                _print_response(result.response, no_markdown)
+                _print_stats(result)
+        finally:
+            # Restore loguru to write to stderr now that the prompt is gone.
+            reconfigure_console_sink()

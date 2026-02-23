@@ -8,7 +8,6 @@ through a single interface.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from loguru import logger
@@ -29,6 +28,8 @@ class LiteLLMProvider(LLMProvider):
     and authentication under the hood.
     """
 
+    _litellm_configured: bool = False
+
     def __init__(
         self,
         provider_name: str,
@@ -45,7 +46,15 @@ class LiteLLMProvider(LLMProvider):
         self._setup_env()
 
     def _setup_env(self) -> None:
-        """Set environment variables that LiteLLM expects for authentication."""
+        """Prepare authentication for LiteLLM.
+
+        Instead of writing API keys to os.environ (which exposes them to child
+        processes and shell commands), we store the resolved env var name so
+        the key can be passed directly via the api_key parameter at call time.
+        Only falls back to env vars when LiteLLM strictly requires it for a
+        specific provider.
+        """
+        self._litellm_env_var: str | None = None
         env_map = {
             "openrouter": "OPENROUTER_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
@@ -55,9 +64,7 @@ class LiteLLMProvider(LLMProvider):
             "gemini": "GEMINI_API_KEY",
         }
         prefix_lower = self._model_prefix.lower().rstrip("/")
-        env_var = env_map.get(prefix_lower)
-        if env_var and self._api_key:
-            os.environ[env_var] = self._api_key
+        self._litellm_env_var = env_map.get(prefix_lower)
 
     @property
     def name(self) -> str:
@@ -77,7 +84,9 @@ class LiteLLMProvider(LLMProvider):
     ) -> LLMResponse:
         import litellm
 
-        litellm.drop_params = True
+        if not LiteLLMProvider._litellm_configured:
+            litellm.drop_params = True
+            LiteLLMProvider._litellm_configured = True
 
         resolved_model = model or self._default_model
         if self._model_prefix and not resolved_model.startswith(self._model_prefix):
@@ -195,9 +204,12 @@ class LiteLLMProvider(LLMProvider):
     @staticmethod
     def _safe_parse_json(text: str) -> dict[str, Any]:
         """Parse JSON from LLM output, using json-repair as a fallback."""
+        if not text or not text.strip():
+            return {}
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
             import json_repair
 
-            return json_repair.loads(text)
+            parsed = json_repair.loads(text)
+        return parsed if isinstance(parsed, dict) else {}

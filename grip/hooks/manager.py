@@ -113,7 +113,11 @@ class HooksManager:
         return count
 
     def _load_module(self, path: Path) -> int:
-        """Import a Python module and register any hook functions it exports."""
+        """Import a Python module and register any hook functions it exports.
+
+        Only loads files owned by the current user with no group/other write
+        permissions to reduce the risk of loading tampered hook files.
+        """
         known_events = {
             "pre_tool_execute",
             "post_tool_execute",
@@ -124,6 +128,25 @@ class HooksManager:
         }
 
         try:
+            import os
+            import stat
+
+            st = path.stat()
+            # Reject hooks not owned by the current user
+            if st.st_uid != os.getuid():
+                logger.warning(
+                    "Skipping hook {} — not owned by current user (uid {})",
+                    path, os.getuid(),
+                )
+                return 0
+            # Reject hooks writable by group or others
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                logger.warning(
+                    "Skipping hook {} — writable by group/others (mode {:o})",
+                    path, st.st_mode,
+                )
+                return 0
+
             spec = importlib.util.spec_from_file_location(f"grip_hook_{path.stem}", path)
             if not spec or not spec.loader:
                 return 0

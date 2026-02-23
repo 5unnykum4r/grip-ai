@@ -6,6 +6,7 @@ Providers translate between this format and their native wire format.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -62,7 +63,7 @@ class LLMMessage:
                         "arguments": (
                             tc.arguments
                             if isinstance(tc.arguments, str)
-                            else __import__("json").dumps(tc.arguments)
+                            else json.dumps(tc.arguments)
                         ),
                     },
                 }

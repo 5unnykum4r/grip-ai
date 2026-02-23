@@ -61,7 +61,7 @@ class SlackChannel(BaseChannel):
         self._bus = bus
         bus.subscribe_outbound(self._handle_outbound)
 
-        bot_token = self._config.token
+        bot_token = self._config.token.get_secret_value()
         app_token = self._config.extra.get("app_token", "")
 
         if not bot_token:

@@ -243,6 +243,8 @@ class SchedulerTool(Tool):
         task_id = params.get("task_id", "")
         if not task_id:
             return "Error: task_id is required for delete action."
+        if "/" in task_id or "\\" in task_id or ".." in task_id:
+            return "Error: invalid task_id."
 
         task_file = cron_dir / f"{task_id}.json"
         if not task_file.exists():

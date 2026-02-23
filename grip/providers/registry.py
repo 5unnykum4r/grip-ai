@@ -6,6 +6,7 @@ and instantiate an LLM provider from the user's config.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -246,11 +247,9 @@ class ProviderRegistry:
 
 def _get_api_key(spec: ProviderSpec, providers_config: dict[str, ProviderEntry]) -> str:
     """Resolve API key from config, then fall back to environment variable."""
-    import os
-
     entry = providers_config.get(spec.name)
-    if entry and entry.api_key:
-        return entry.api_key
+    if entry and entry.api_key.get_secret_value():
+        return entry.api_key.get_secret_value()
 
     if spec.api_key_env:
         return os.environ.get(spec.api_key_env, "")

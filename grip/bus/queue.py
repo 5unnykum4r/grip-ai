@@ -26,7 +26,6 @@ class MessageBus:
     def __init__(self, max_queue_size: int = 256) -> None:
         self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=max_queue_size)
         self._outbound_listeners: list[OutboundListener] = []
-        self._running = False
 
     async def push_inbound(self, message: InboundMessage) -> None:
         """Called by channels to submit an incoming user message."""
@@ -60,11 +59,13 @@ class MessageBus:
             message.chat_id,
             len(message.text),
         )
-        for listener in self._outbound_listeners:
-            try:
-                await listener(message)
-            except Exception as exc:
-                logger.error("Outbound listener error: {}", exc)
+        results = await asyncio.gather(
+            *(listener(message) for listener in self._outbound_listeners),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("Outbound listener error: {}", result)
 
     @property
     def inbound_pending(self) -> int:

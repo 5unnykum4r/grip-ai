@@ -15,8 +15,9 @@ pattern extraction) and optionally ``TrackedEngine`` (daily token limits).
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from loguru import logger
 
 if TYPE_CHECKING:
     from grip.config.schema import GripConfig
@@ -27,8 +28,6 @@ if TYPE_CHECKING:
     from grip.workspace import WorkspaceManager
 
 from grip.engines.types import EngineProtocol
-
-logger = logging.getLogger(__name__)
 
 
 def _import_sdk_runner():
@@ -148,6 +147,6 @@ def create_engine(
         state_dir = config.agents.defaults.workspace.expanduser().resolve() / "state"
         tracker = TokenTracker(state_dir, max_daily)
         engine = TrackedEngine(engine, tracker)
-        logger.info("Token tracking enabled (daily limit: %d)", max_daily)
+        logger.info("Token tracking enabled (daily limit: {})", max_daily)
 
     return engine

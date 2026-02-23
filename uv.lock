@@ -688,6 +688,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-telegram-bot" },
     { name = "rich" },
+    { name = "sse-starlette" },
     { name = "typer" },
     { name = "uvicorn" },
 ]
@@ -765,6 +766,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0" },
     { name = "slack-sdk", marker = "extra == 'all'", specifier = ">=3.26" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.26" },
+    { name = "sse-starlette", specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "yfinance", marker = "extra == 'all'", specifier = ">=0.2" },

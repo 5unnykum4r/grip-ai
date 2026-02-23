@@ -4,7 +4,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock ./
 COPY grip/ grip/
 
 RUN uv sync --no-dev
@@ -25,8 +25,13 @@ COPY --from=base /usr/local/bin /usr/local/bin
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN mkdir -p /root/.grip
+RUN groupadd --gid 1000 grip \
+    && useradd --uid 1000 --gid grip --create-home grip \
+    && mkdir -p /home/grip/.grip \
+    && chown -R grip:grip /home/grip/.grip /app
+
+USER grip
 
 EXPOSE 18800
 
-ENTRYPOINT ["grip", "gateway", "--host", "0.0.0.0"]
+ENTRYPOINT ["grip", "gateway", "--host", "127.0.0.1"]

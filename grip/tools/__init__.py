@@ -1,3 +1,5 @@
+import contextlib
+
 from loguru import logger
 
 from grip.tools.base import Tool, ToolContext, ToolRegistry
@@ -43,8 +45,6 @@ def create_default_registry(
     mcp_servers: dict | None = None,
 ) -> ToolRegistry:
     """Build a ToolRegistry pre-loaded with all built-in tools."""
-    import asyncio
-
     registry = ToolRegistry()
     registry.register_many(create_filesystem_tools())
     registry.register_many(create_shell_tools())
@@ -61,17 +61,28 @@ def create_default_registry(
 
     if mcp_servers:
         mcp_manager = MCPManager()
+        registry.mcp_manager = mcp_manager
         try:
             import asyncio
             import threading
 
             def _load_mcp():
+                loop = asyncio.new_event_loop()
+                mcp_manager._event_loop = loop
                 try:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    new_loop.run_until_complete(mcp_manager.connect_all(mcp_servers, registry))
-                except Exception as exc:
+                    loop.run_until_complete(mcp_manager.connect_all(mcp_servers, registry))
+                except BaseException as exc:
                     logger.warning("MCP server connection failed: {}", exc)
+                    loop.close()
+                    return
+                # Keep the event loop running so MCP transport background tasks
+                # (anyio task groups inside streamablehttp/sse contexts) stay alive.
+                # MCPManager.shutdown() calls loop.call_soon_threadsafe(loop.stop)
+                # to exit cleanly. The daemon flag ensures this thread doesn't
+                # block process exit if shutdown() is never called.
+                with contextlib.suppress(BaseException):
+                    loop.run_forever()
+                loop.close()
 
             thread = threading.Thread(target=_load_mcp, daemon=True)
             thread.start()

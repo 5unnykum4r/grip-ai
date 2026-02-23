@@ -131,13 +131,34 @@ class SessionManager:
     within the workspace. All writes are atomic (temp file + rename).
     """
 
-    def __init__(self, sessions_dir: Path) -> None:
+    _DEFAULT_MAX_CACHE = 200
+
+    def __init__(self, sessions_dir: Path, max_cache_size: int = _DEFAULT_MAX_CACHE) -> None:
         self._dir = sessions_dir
         self._dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, Session] = {}
+        self._max_cache_size = max_cache_size
 
     def _path_for(self, key: str) -> Path:
         return self._dir / f"{_sanitize_key(key)}.json"
+
+    def get(self, key: str) -> Session | None:
+        """Load an existing session, or return None if it doesn't exist."""
+        if key in self._cache:
+            return self._cache[key]
+
+        path = self._path_for(key)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            session = _dict_to_session(data)
+            self._cache[key] = session
+            self._evict_if_needed()
+            return session
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning("Corrupt session file {}: {}", path, exc)
+            return None
 
     def get_or_create(self, key: str) -> Session:
         """Load an existing session from disk, or create a new empty one."""
@@ -157,6 +178,7 @@ class SessionManager:
 
         session = Session(key=key)
         self._cache[key] = session
+        self._evict_if_needed()
         logger.debug("Created new session: {}", key)
         return session
 
@@ -174,6 +196,7 @@ class SessionManager:
         tmp_path.rename(path)
 
         self._cache[session.key] = session
+        self._evict_if_needed()
         logger.debug("Saved session '{}' ({} messages)", session.key, session.message_count)
 
     def delete(self, key: str) -> bool:
@@ -187,15 +210,32 @@ class SessionManager:
         return False
 
     def list_sessions(self) -> list[str]:
-        """Return all session keys found on disk."""
-        keys: list[str] = []
+        """Return all session keys found on disk.
+
+        Uses the in-memory cache for sessions already loaded (avoids
+        re-reading their JSON files). Only reads JSON for sessions
+        not yet in cache.
+        """
+        keys: set[str] = set(self._cache.keys())
+        cached_stems = {_sanitize_key(k) for k in keys}
         for path in self._dir.glob("*.json"):
+            if path.stem in cached_stems:
+                continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                keys.append(data["key"])
+                keys.add(data["key"])
             except (json.JSONDecodeError, KeyError):
-                continue
+                keys.add(path.stem)
         return sorted(keys)
+
+    def _evict_if_needed(self) -> None:
+        """Evict least-recently-updated sessions when cache exceeds max size."""
+        if len(self._cache) <= self._max_cache_size:
+            return
+        sorted_keys = sorted(self._cache, key=lambda k: self._cache[k].updated_at)
+        excess = len(self._cache) - self._max_cache_size
+        for key in sorted_keys[:excess]:
+            del self._cache[key]
 
     def clear_cache(self) -> None:
         """Drop all in-memory cached sessions."""

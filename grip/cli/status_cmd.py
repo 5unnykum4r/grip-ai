@@ -93,7 +93,7 @@ def status_command() -> None:
     # Configured providers
     configured = []
     for pname, entry in config.providers.items():
-        has_key = bool(entry.api_key)
+        has_key = bool(entry.api_key.get_secret_value())
         marker = "[green]key set[/green]" if has_key else "[dim]no key[/dim]"
         configured.append(f"{pname} ({marker})")
     if configured:

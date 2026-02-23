@@ -55,7 +55,7 @@ class DiscordChannel(BaseChannel):
         self._bus = bus
         bus.subscribe_outbound(self._handle_outbound)
 
-        token = self._config.token
+        token = self._config.token.get_secret_value()
         if not token:
             raise ValueError("Discord bot token is required (config.channels.discord.token)")
 

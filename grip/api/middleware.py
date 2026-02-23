@@ -9,6 +9,7 @@ Applied outermost-first during app setup:
 from __future__ import annotations
 
 import time
+import uuid
 
 from fastapi import Request, Response
 from loguru import logger
@@ -30,12 +31,18 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self._max_bytes:
+        try:
+            if content_length and int(content_length) > self._max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": f"Request body too large (max {self._max_bytes} bytes)",
+                    },
+                )
+        except ValueError:
             return JSONResponse(
-                status_code=413,
-                content={
-                    "detail": f"Request body too large (max {self._max_bytes} bytes)",
-                },
+                status_code=400,
+                content={"detail": "Invalid Content-Length header"},
             )
         return await call_next(request)
 
@@ -49,8 +56,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
 
         request_id = request.headers.get("x-request-id")
         if not request_id:
-            import uuid
-
             request_id = uuid.uuid4().hex[:12]
 
         request.state.request_id = request_id

@@ -48,10 +48,12 @@ def _resolve_path(raw_path: str, ctx: ToolContext) -> Path:
 
     if ctx.restrict_to_workspace:
         workspace_resolved = ctx.workspace_path.resolve()
-        if not str(resolved).startswith(str(workspace_resolved)):
+        try:
+            resolved.relative_to(workspace_resolved)
+        except ValueError:
             raise ValueError(
                 f"Path '{raw_path}' resolves outside workspace. Workspace: {workspace_resolved}"
-            )
+            ) from None
 
     return resolved
 

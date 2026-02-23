@@ -54,6 +54,7 @@ class LiteLLMRunner(EngineProtocol):
 
         # Build the LLM provider from the user's config
         provider = create_provider(config)
+        self._provider = provider
 
         # Build the tool registry with any configured MCP servers
         self._registry = create_default_registry(mcp_servers=config.tools.mcp_servers)
@@ -142,6 +143,11 @@ class LiteLLMRunner(EngineProtocol):
         """
         session = self._session_mgr.get_or_create(session_key)
         await self._loop.consolidate_session(session)
+
+    async def close(self) -> None:
+        """Close the underlying LLM provider if it supports it."""
+        if hasattr(self._provider, "close"):
+            await self._provider.close()
 
     async def reset_session(self, session_key: str) -> None:
         """Clear all conversation history for a session by deleting it."""

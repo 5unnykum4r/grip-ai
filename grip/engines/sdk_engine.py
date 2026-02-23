@@ -10,6 +10,7 @@ agentic looping, and context management to the Claude Agent SDK. Grip handles:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -66,22 +67,21 @@ class SDKRunner(EngineProtocol):
         self._trust_mgr = trust_mgr
         self._kb = knowledge_base
 
-        # Resolve ANTHROPIC_API_KEY: config providers take priority, then env var
-        api_key = ""
+        # Resolve ANTHROPIC_API_KEY: config providers take priority, then env var.
+        # Store it privately instead of writing to os.environ to prevent
+        # exfiltration via child processes or shell commands.
+        self._api_key = ""
         anthropic_provider = config.providers.get("anthropic")
         if anthropic_provider:
-            api_key = anthropic_provider.api_key
-        if not api_key:
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if api_key:
-            os.environ["ANTHROPIC_API_KEY"] = api_key
+            self._api_key = anthropic_provider.api_key.get_secret_value()
+        if not self._api_key:
+            self._api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
         defaults = config.agents.defaults
         self._model: str = defaults.sdk_model
         self._permission_mode: str = defaults.sdk_permission_mode
         self._cwd: str = str(workspace.root)
         self._mcp_servers = config.tools.mcp_servers
-        self._clients: dict[str, Any] = {}
         self._send_callback: Callable | None = None
         self._send_file_callback: Callable | None = None
 
@@ -100,19 +100,24 @@ class SDKRunner(EngineProtocol):
     def _build_mcp_config(self) -> list[dict[str, Any]]:
         """Convert grip MCPServerConfig entries to SDK-compatible dicts.
 
-        URL-based servers produce: {"name": ..., "url": ..., "headers": ...}
-        Stdio-based servers produce: {"name": ..., "command": ..., "args": ..., "env": ...}
+        Skips disabled servers. URL-based servers produce:
+        {"name": ..., "url": ..., "headers": ..., "type": ...}
+        Stdio-based servers produce:
+        {"name": ..., "command": ..., "args": ..., "env": ...}
         """
         result: list[dict[str, Any]] = []
         for name, srv in self._mcp_servers.items():
+            if not srv.enabled:
+                continue
             if srv.url:
-                result.append(
-                    {
-                        "name": name,
-                        "url": srv.url,
-                        "headers": dict(srv.headers),
-                    }
-                )
+                entry: dict[str, Any] = {
+                    "name": name,
+                    "url": srv.url,
+                    "headers": dict(srv.headers),
+                }
+                if srv.type:
+                    entry["type"] = srv.type
+                result.append(entry)
             elif srv.command:
                 result.append(
                     {
@@ -123,6 +128,15 @@ class SDKRunner(EngineProtocol):
                     }
                 )
         return result
+
+    def _collect_allowed_tools(self) -> list[str]:
+        """Merge allowed_tools from all enabled MCP servers into a flat list."""
+        tools: list[str] = []
+        for _name, srv in self._mcp_servers.items():
+            if not srv.enabled:
+                continue
+            tools.extend(srv.allowed_tools)
+        return tools
 
     # -- System prompt assembly --
 
@@ -213,7 +227,7 @@ class SDKRunner(EngineProtocol):
             cb = runner._send_callback
             if cb is None:
                 return runner._text_result("Send callback not configured; message not delivered.")
-            result = cb(args["text"], args["session_key"])
+            result = await asyncio.to_thread(cb, args["text"], args["session_key"])
             return runner._text_result(str(result))
 
         @tool(
@@ -225,7 +239,7 @@ class SDKRunner(EngineProtocol):
             cb = runner._send_file_callback
             if cb is None:
                 return runner._text_result("Send file callback not configured; file not delivered.")
-            result = cb(args["file_path"], args["caption"], args["session_key"])
+            result = await asyncio.to_thread(cb, args["file_path"], args["caption"], args["session_key"])
             return runner._text_result(str(result))
 
         @tool(
@@ -262,8 +276,11 @@ class SDKRunner(EngineProtocol):
             async def stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                 import yfinance as yf
 
-                ticker = yf.Ticker(args["symbol"])
-                info = ticker.info
+                def _fetch_quote(symbol: str) -> dict:
+                    ticker = yf.Ticker(symbol)
+                    return ticker.info
+
+                info = await asyncio.to_thread(_fetch_quote, args["symbol"])
                 price = info.get("currentPrice") or info.get("regularMarketPrice", "N/A")
                 name = info.get("shortName", args["symbol"])
                 return runner._text_result(f"{name} ({args['symbol']}): ${price}")
@@ -291,12 +308,20 @@ class SDKRunner(EngineProtocol):
         system_prompt = self._build_system_prompt(user_message, session_key)
         custom_tools = self._build_custom_tools()
         mcp_config = self._build_mcp_config()
+        allowed_tools = self._collect_allowed_tools()
 
         effective_model = model or self._model
 
         pre_hook = build_pre_tool_use_hook(Path(self._cwd), self._trust_mgr)
         post_hook = build_post_tool_use_hook()
         stop_hook = build_stop_hook(self._memory_mgr)
+
+        env_opts: dict[str, str] = {}
+        if self._api_key:
+            env_opts["ANTHROPIC_API_KEY"] = self._api_key
+        tool_search = self._config.tools.enable_tool_search
+        if tool_search and tool_search != "auto":
+            env_opts["ENABLE_TOOL_SEARCH"] = tool_search
 
         options = ClaudeAgentOptions(
             model=effective_model,
@@ -305,6 +330,8 @@ class SDKRunner(EngineProtocol):
             mcp_servers=mcp_config,
             permission_mode=self._permission_mode,
             cwd=self._cwd,
+            allowed_tools=allowed_tools if allowed_tools else None,
+            env=env_opts if env_opts else None,
             hooks={
                 "pre_tool_use": pre_hook,
                 "post_tool_use": post_hook,
@@ -348,7 +375,6 @@ class SDKRunner(EngineProtocol):
         )
 
     async def reset_session(self, session_key: str) -> None:
-        """Clear all state for a session: remove SDK client and delete persisted session."""
-        self._clients.pop(session_key, None)
+        """Clear all state for a session and delete persisted session."""
         self._session_mgr.delete(session_key)
         logger.info("Reset session '{}'", session_key)

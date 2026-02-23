@@ -10,7 +10,7 @@ import platform as _platform
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr, field_serializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.main import JsonConfigSettingsSource
 
@@ -164,16 +164,21 @@ class ModelTiersConfig(BaseModel):
 class ProviderEntry(BaseModel):
     """Connection details for a single LLM provider."""
 
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
     api_base: str = ""
     default_model: str = ""
+
+    @field_serializer("api_key", when_used="json")
+    @staticmethod
+    def _serialize_api_key(v: SecretStr) -> str:
+        return v.get_secret_value()
 
 
 class ChannelEntry(BaseModel):
     """Configuration for a single chat channel."""
 
     enabled: bool = False
-    token: str = ""
+    token: SecretStr = SecretStr("")
     allow_from: list[str] = Field(
         default_factory=list,
         description="User IDs allowed to interact. Empty list allows everyone.",
@@ -182,6 +187,11 @@ class ChannelEntry(BaseModel):
         default_factory=dict,
         description="Channel-specific settings (bot_token, app_token, webhook_port, etc.).",
     )
+
+    @field_serializer("token", when_used="json")
+    @staticmethod
+    def _serialize_token(v: SecretStr) -> str:
+        return v.get_secret_value()
 
 
 class ChannelsConfig(BaseModel):
@@ -196,8 +206,13 @@ class WebSearchProvider(BaseModel):
     """Configuration for a single web search backend."""
 
     enabled: bool = False
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
     max_results: int = Field(default=5, ge=1, le=20)
+
+    @field_serializer("api_key", when_used="json")
+    @staticmethod
+    def _serialize_api_key(v: SecretStr) -> str:
+        return v.get_secret_value()
 
 
 class WebSearchConfig(BaseModel):
@@ -208,6 +223,21 @@ class WebSearchConfig(BaseModel):
     perplexity: WebSearchProvider = Field(default_factory=WebSearchProvider)
 
 
+class OAuthConfig(BaseModel):
+    """OAuth 2.0 configuration for MCP servers requiring browser-based login."""
+
+    client_id: str = ""
+    auth_url: str = Field(default="", description="OAuth 2.0 authorization endpoint URL.")
+    token_url: str = Field(default="", description="OAuth 2.0 token exchange endpoint URL.")
+    scopes: list[str] = Field(default_factory=list, description="OAuth scopes to request.")
+    redirect_port: int = Field(
+        default=18801,
+        ge=1024,
+        le=65535,
+        description="Local port for the OAuth callback server.",
+    )
+
+
 class MCPServerConfig(BaseModel):
     """MCP server connection definition (stdio or HTTP transport)."""
 
@@ -216,6 +246,29 @@ class MCPServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
+    type: str = Field(
+        default="",
+        description="Transport type: 'http', 'sse', or empty for stdio (auto-detected from command/url).",
+    )
+    allowed_tools: list[str] = Field(
+        default_factory=list,
+        description="Tool permission patterns with wildcard support (e.g. 'mcp__server__*'). "
+        "Empty list means all tools allowed.",
+    )
+    timeout: int = Field(
+        default=60,
+        ge=1,
+        le=600,
+        description="Connection timeout in seconds for this MCP server.",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="When False, server is skipped during connection without deleting config.",
+    )
+    oauth: OAuthConfig | None = Field(
+        default=None,
+        description="OAuth 2.0 config for servers requiring browser-based login.",
+    )
 
 
 class ToolsConfig(BaseModel):
@@ -243,6 +296,11 @@ class ToolsConfig(BaseModel):
     mcp_servers: dict[str, MCPServerConfig] = Field(
         default_factory=dict,
         description="Named MCP server definitions (stdio or HTTP).",
+    )
+    enable_tool_search: str = Field(
+        default="auto",
+        description="MCP tool search behavior: 'auto' (activate when tools exceed 10%% of context), "
+        "'auto:N' (custom threshold), 'true' (always), 'false' (disabled).",
     )
 
 
@@ -283,8 +341,13 @@ class APIConfig(BaseModel):
     arbitrary tool invocation (including shell) over HTTP.
     """
 
-    auth_token: str = ""
+    auth_token: SecretStr = SecretStr("")
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10000)
+
+    @field_serializer("auth_token", when_used="json")
+    @staticmethod
+    def _serialize_auth_token(v: SecretStr) -> str:
+        return v.get_secret_value()
     rate_limit_per_minute_per_ip: int = Field(default=30, ge=1, le=10000)
     cors_allowed_origins: list[str] = Field(default_factory=list)
     max_request_body_bytes: int = Field(default=1_048_576, ge=1024, le=52_428_800)
@@ -362,10 +425,17 @@ class GripConfig(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
 
     @classmethod
-    def settings_customise_sources(cls, settings_cls, **kwargs):
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
         """Enable JSON file loading alongside env vars and init kwargs."""
         return (
-            kwargs.get("init_settings"),
-            kwargs.get("env_settings"),
+            init_settings,
+            env_settings,
             JsonConfigSettingsSource(settings_cls),
         )

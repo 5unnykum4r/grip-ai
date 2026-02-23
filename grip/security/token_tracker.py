@@ -8,6 +8,7 @@ configured and exceeded, raises TokenLimitError.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -43,6 +44,7 @@ class TokenTracker:
         self._state_dir = state_dir
         self._usage_file = state_dir / "token_usage.json"
         self._max_daily = max_daily_tokens
+        self._lock = threading.Lock()
         self._data = self._load()
 
     def _today(self) -> str:
@@ -86,15 +88,16 @@ class TokenTracker:
             raise TokenLimitError(self._data["total_tokens"], self._max_daily)
 
     def record(self, prompt_tokens: int, completion_tokens: int) -> None:
-        """Record tokens from a completed LLM call."""
-        if self._data.get("date") != self._today():
-            self._data = self._empty()
+        """Record tokens from a completed LLM call (thread-safe)."""
+        with self._lock:
+            if self._data.get("date") != self._today():
+                self._data = self._empty()
 
-        self._data["prompt_tokens"] += prompt_tokens
-        self._data["completion_tokens"] += completion_tokens
-        self._data["total_tokens"] += prompt_tokens + completion_tokens
-        self._data["request_count"] += 1
-        self._save()
+            self._data["prompt_tokens"] += prompt_tokens
+            self._data["completion_tokens"] += completion_tokens
+            self._data["total_tokens"] += prompt_tokens + completion_tokens
+            self._data["request_count"] += 1
+            self._save()
 
         if self._max_daily > 0:
             remaining = self._max_daily - self._data["total_tokens"]

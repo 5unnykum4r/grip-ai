@@ -24,6 +24,7 @@ _OTEL_AVAILABLE = (
 )
 
 _tracer = None
+_provider = None
 _initialized = False
 
 
@@ -63,7 +64,7 @@ def init_tracing(service_name: str = "grip", endpoint: str = "") -> bool:
     Returns True if tracing was successfully initialized, False if
     the otel packages are not installed.
     """
-    global _tracer, _initialized  # noqa: PLW0603
+    global _tracer, _provider, _initialized  # noqa: PLW0603
 
     if _initialized:
         return _tracer is not None and not isinstance(_tracer, NoOpTracer)
@@ -86,6 +87,7 @@ def init_tracing(service_name: str = "grip", endpoint: str = "") -> bool:
 
         resource = Resource.create({"service.name": service_name})
         provider = TracerProvider(resource=resource)
+        _provider = provider
 
         if endpoint:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
@@ -115,3 +117,18 @@ def get_tracer():
     if _tracer is None:
         _tracer = NoOpTracer()
     return _tracer
+
+
+def shutdown_tracing() -> None:
+    """Flush pending spans and shut down the TracerProvider.
+
+    Safe to call even when tracing was never initialized or when
+    OpenTelemetry is not installed — in those cases this is a no-op.
+    """
+    global _provider  # noqa: PLW0603
+    if _provider is not None and hasattr(_provider, "shutdown"):
+        try:
+            _provider.shutdown()
+        except Exception as exc:
+            logger.warning("Error shutting down TracerProvider: {}", exc)
+        _provider = None
