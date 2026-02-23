@@ -34,4 +34,4 @@ USER grip
 
 EXPOSE 18800
 
-ENTRYPOINT ["grip", "gateway", "--host", "127.0.0.1"]
+ENTRYPOINT ["grip", "gateway", "--host", "0.0.0.0"]

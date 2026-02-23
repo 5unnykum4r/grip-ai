@@ -74,10 +74,9 @@ class AgentDefaults(BaseModel):
         description="Sampling temperature for LLM responses.",
     )
     max_tool_iterations: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum LLM-tool round-trips before the agent stops.",
+        default=0,
+        ge=0,
+        description="Maximum LLM-tool round-trips before the agent stops. 0 = unlimited (default).",
     )
     memory_window: int = Field(
         default=50,

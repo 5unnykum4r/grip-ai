@@ -6,7 +6,11 @@ iterative cycle of:
   1. Send conversation + tool definitions to the LLM
   2. If LLM returns tool_calls -> execute each tool -> append results -> goto 1
   3. If LLM returns plain text -> return it as the final answer
-  4. Safety: stop after max_tool_iterations to prevent infinite loops
+  4. Safety: stop after max_tool_iterations (0 = unlimited) to prevent infinite loops
+
+Mid-run compaction: when the in-flight message list exceeds 50 non-system
+messages, older messages are summarized and replaced with a compact block,
+preventing context overflow on long multi-step tasks.
 
 The loop is fully async and designed to be called from the CLI,
 REST API, or gateway message bus. It integrates with ToolRegistry
@@ -17,6 +21,7 @@ for long-term fact storage.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -69,6 +74,26 @@ class AgentRunResult:
 # Kept for backward compatibility with Phase 2 API
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[str]]
 
+# Mid-run compaction thresholds
+_COMPACT_THRESHOLD = 50  # compact when non-system messages exceed this
+_COMPACT_KEEP_RECENT = 20  # keep this many recent messages after compaction
+
+# Credential scrubbing: redact common secret patterns from tool outputs
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(sk-[A-Za-z0-9]{20,})", re.IGNORECASE), "[REDACTED_API_KEY]"),
+    (re.compile(r"(ghp_[A-Za-z0-9]{36,})", re.IGNORECASE), "[REDACTED_GH_TOKEN]"),
+    (re.compile(r"(xox[baprs]-[0-9A-Za-z\-]{10,})", re.IGNORECASE), "[REDACTED_SLACK_TOKEN]"),
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9\-_.~+/]{20,}=*", re.IGNORECASE), r"\1[REDACTED_TOKEN]"),
+    (re.compile(r"(password[\"'\s:=]+)[^\s,}\"'\n]{6,}", re.IGNORECASE), r"\1[REDACTED]"),
+]
+
+
+def _scrub_secrets(text: str) -> str:
+    """Redact high-confidence secret patterns before storing in message history."""
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 class AgentLoop:
     """Orchestrates the LLM <-> tool execution cycle.
@@ -106,7 +131,7 @@ class AgentLoop:
         self._config = config
         self._provider = provider
         self._workspace = workspace
-        self._context_builder = ContextBuilder(workspace)
+        self._context_builder = ContextBuilder(workspace, channels=config.channels)
         self._registry = tool_registry
         self._session_mgr = session_manager
         self._memory_mgr = memory_manager
@@ -267,8 +292,18 @@ class AgentLoop:
         all_tool_calls: list[str] = []
         all_tool_details: list[ToolCallDetail] = []
 
-        for iteration in range(1, defaults.max_tool_iterations + 1):
-            logger.info("Agent loop iteration {}/{}", iteration, defaults.max_tool_iterations)
+        max_iter = defaults.max_tool_iterations  # 0 = unlimited
+        iteration = 0
+        while True:
+            iteration += 1
+            if max_iter > 0 and iteration > max_iter:
+                break
+            limit_label = str(max_iter) if max_iter > 0 else "∞"
+            logger.info("Agent loop iteration {}/{}", iteration, limit_label)
+
+            # Mid-run compaction: prevent context overflow on long tasks
+            if iteration > 1:
+                messages = await self._maybe_compact_mid_run(messages, effective_model)
 
             response = await self._call_llm(
                 messages,
@@ -334,10 +369,12 @@ class AgentLoop:
                         output_preview=exec_result.output[:120],
                     )
                 )
+                # Scrub secrets before storing tool output in message history
+                scrubbed_output = _scrub_secrets(exec_result.output)
                 messages.append(
                     LLMMessage(
                         role="tool",
-                        content=exec_result.output,
+                        content=scrubbed_output,
                         tool_call_id=exec_result.tool_call_id,
                         name=exec_result.tool_name,
                     )
@@ -362,7 +399,7 @@ class AgentLoop:
         # Exhausted max iterations — force a final text response
         logger.warning(
             "Agent hit max iterations ({}), generating forced response",
-            defaults.max_tool_iterations,
+            max_iter,
         )
         exhaust_msg = (
             "I've reached my maximum number of tool iterations for this request. "
@@ -385,7 +422,7 @@ class AgentLoop:
         )
         result = AgentRunResult(
             response=final_text,
-            iterations=defaults.max_tool_iterations,
+            iterations=iteration - 1,
             total_usage=TokenUsage(
                 prompt_tokens=total_prompt_tokens,
                 completion_tokens=total_completion_tokens,
@@ -498,6 +535,76 @@ class AgentLoop:
             logger.info("Manual consolidation complete: pruned {} messages", pruned)
         except Exception as exc:
             logger.error("Manual consolidation failed: {}", exc)
+
+    # ── Mid-run compaction ──
+
+    async def _maybe_compact_mid_run(
+        self, messages: list[LLMMessage], model: str
+    ) -> list[LLMMessage]:
+        """Compact in-flight messages when non-system messages exceed the threshold.
+
+        Splits messages into leading system messages (always kept) and
+        conversation messages. When conversation messages exceed
+        _COMPACT_THRESHOLD, older ones are summarized via LLM and replaced
+        with a single compact summary block, keeping _COMPACT_KEEP_RECENT
+        recent messages intact.
+        """
+        system_msgs = [m for m in messages if m.role == "system"]
+        conv_msgs = [m for m in messages if m.role != "system"]
+
+        if len(conv_msgs) <= _COMPACT_THRESHOLD:
+            return messages
+
+        to_summarize = conv_msgs[:-_COMPACT_KEEP_RECENT]
+        to_keep = conv_msgs[-_COMPACT_KEEP_RECENT:]
+
+        logger.info(
+            "Mid-run compaction triggered: {} conv messages → summarizing {}, keeping {}",
+            len(conv_msgs),
+            len(to_summarize),
+            len(to_keep),
+        )
+
+        history_text = "\n".join(
+            f"[{m.role}]: {(m.content or '')[:500]}" for m in to_summarize
+        )
+
+        consolidation_model = self._config.agents.defaults.consolidation_model or model
+        summary_prompt = [
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are a summarizer for an AI agent's in-progress task history. "
+                    "Summarize the following conversation and tool execution history concisely. "
+                    "Focus on: completed sub-tasks, key findings, important decisions, "
+                    "current state, and any errors encountered. Be specific but brief."
+                ),
+            ),
+            LLMMessage(
+                role="user",
+                content=f"Conversation to summarize:\n\n{history_text}",
+            ),
+        ]
+
+        try:
+            response = await self._call_llm(
+                summary_prompt,
+                tools=None,
+                model=consolidation_model,
+                temperature=0.3,
+                max_tokens=1024,
+            )
+            summary = response.content or "Previous task history (compacted)."
+            logger.info("Mid-run compaction complete, summary: {} chars", len(summary))
+        except Exception as exc:
+            logger.warning("Mid-run compaction LLM call failed (using truncation): {}", exc)
+            summary = f"[Compacted {len(to_summarize)} earlier messages due to context length]"
+
+        summary_msg = LLMMessage(
+            role="system",
+            content=f"[Mid-run context compaction — earlier history summary]\n{summary}",
+        )
+        return system_msgs + [summary_msg] + to_keep
 
     # ── Infinite context: relevance-scored retrieval ──
 

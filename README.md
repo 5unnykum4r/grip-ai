@@ -16,13 +16,13 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/engine-Claude%20Agent%20SDK-blueviolet" alt="Claude Agent SDK">
-  <img src="https://img.shields.io/badge/tests-614-brightgreen" alt="614 Tests">
+  <img src="https://img.shields.io/badge/tests-770-brightgreen" alt="770 Tests">
   <img src="https://img.shields.io/badge/providers-15-orange" alt="15 LLM Providers">
 </p>
 
 ---
 
-grip is a self-hostable AI agent platform — 112 Python modules, ~19.5K lines, 614 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, schedule cron tasks, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
+grip is a self-hostable AI agent platform — 115 Python modules, ~21,200 lines, 770 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, track multi-step tasks, schedule cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
 
 ## Features
 
@@ -30,14 +30,15 @@ grip is a self-hostable AI agent platform — 112 Python modules, ~19.5K lines, 
 |----------|---------|
 | **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM fallback for non-Claude models |
 | **LLM Providers** | Anthropic (via SDK), OpenRouter, OpenAI, DeepSeek, Groq, Google Gemini, Qwen, MiniMax, Moonshot (Kimi), Ollama (Cloud), Ollama (Local), vLLM, Llama.cpp, LM Studio, and any OpenAI-compatible API |
-| **Built-in Tools** | 15 tool modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, code analysis, data transforms, document generation, email composition, messaging, subagent spawning, finance (yfinance), cron scheduling, MCP tools |
+| **Built-in Tools** | 26 tools across 16 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (yfinance), cron scheduling, workflows, MCP tools |
+| **Task Tracking** | `todo_write`/`todo_read` tools with workspace persistence — active tasks injected into every system prompt so the agent never loses track across iterations |
 | **Chat Channels** | Telegram (bot commands, photos, documents, voice), Discord, Slack (Socket Mode) |
 | **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 27 endpoints |
 | **Workflows** | DAG-based multi-agent orchestration with dependency resolution and parallel execution |
-| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, semantic caching, and knowledge base |
+| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, mid-run compaction, semantic caching, and knowledge base |
 | **Scheduling** | Cron jobs with channel delivery, heartbeat service, natural language scheduling |
 | **Skills** | 15 built-in markdown skills, workspace overrides, install/remove via CLI |
-| **Security** | Directory trust model, shell deny-list (28 patterns), SecretStr config fields, secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
+| **Security** | Directory trust model, shell deny-list (50+ patterns), credential scrubbing, SecretStr config fields, secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
 | **Observability** | OpenTelemetry tracing, in-memory metrics, crash recovery, config validation |
 
 ## Architecture
@@ -58,7 +59,18 @@ grip gateway
 ├── Engine (pluggable)
 │   ├── SDKRunner (claude_sdk)         Claude Agent SDK — full agentic loop
 │   └── LiteLLMRunner (litellm)        any model via LiteLLM + grip's AgentLoop
-├── Tool Registry                      15 modules (filesystem, shell, web, research, ...)
+├── Tool Registry                      26 tools across 16 modules
+│   ├── filesystem                     read/write/edit/append/list/delete/trash
+│   ├── shell                          exec with 50+ pattern deny-list
+│   ├── web                            web_search + web_fetch
+│   ├── research                       deep web_research
+│   ├── message                        send_message + send_file
+│   ├── spawn                          subagent spawn/check/list
+│   ├── todo                           todo_write + todo_read (task tracking)
+│   ├── workflow                       multi-agent DAG execution
+│   ├── scheduler                      cron scheduling
+│   ├── finance                        yfinance (optional)
+│   └── mcp                            MCP tool proxy
 ├── MCP Manager                        stdio + HTTP/SSE servers, OAuth 2.0 + PKCE
 ├── Memory
 │   ├── MEMORY.md                      durable facts (TF-IDF search, Jaccard dedup)
@@ -109,9 +121,9 @@ pip install grip-ai
 ```bash
 # Clone the repository
 git clone https://github.com/5unnykum4r/grip-ai.git
-cd grip
+cd grip-ai
 
-# Install (includes Telegram, REST API, and all core features)
+# Install (includes Telegram, REST API, LiteLLM, and all core features)
 uv sync
 
 # Optional extras
@@ -123,23 +135,15 @@ uv sync --extra viz          # Data visualization (plotext)
 uv sync --extra observe      # OpenTelemetry tracing
 uv sync --extra all          # Everything above
 
-# Register grip command globally (from source)
-uv tool install .
-```
-
-### Optional: Multi-Model Support
-
-To use non-Claude models (OpenAI, DeepSeek, Groq, Gemini, Ollama Cloud/Local, etc.), install the LiteLLM extra:
-
-```bash
-uv sync --extra litellm
+# Register grip command globally (development/editable mode)
+uv tool install --editable .
 ```
 
 ### Requirements
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
-- An Anthropic API key (for Claude Agent SDK) or an API key from another LLM provider (with `--extra litellm`)
+- An Anthropic API key (for Claude Agent SDK) or an API key from another LLM provider (with `litellm` engine)
 
 ## <a id="quickstart"></a>Quickstart
 
@@ -178,8 +182,14 @@ Interactive mode supports slash commands:
 | `/undo` | Remove last exchange |
 | `/rewind N` | Rewind N exchanges |
 | `/compact` | Compress session history |
+| `/copy` | Copy last response to clipboard |
 | `/model <name>` | Switch AI model |
+| `/provider` | Show current provider details |
+| `/tasks` | Show scheduled cron tasks |
+| `/trust <path>` | Grant agent access to a directory |
+| `/trust revoke <path>` | Revoke agent access to a directory |
 | `/status` | Show session info |
+| `/mcp` | List MCP servers |
 | `/doctor` | Run diagnostics |
 | `/help` | List all commands |
 | `/exit` | Exit grip |
@@ -240,7 +250,7 @@ Open Telegram and message your bot. Available bot commands:
 | `/new` | Start fresh conversation |
 | `/status` | Session info (model, message count, memory) |
 | `/model <name>` | Switch AI model (e.g. `/model openai/gpt-4o`) |
-| `/trust <path>` | Trust a directory or list trusted dirs (e.g. `/trust ~/Downloads`) |
+| `/trust <path>` | Grant agent access to a directory (e.g. `/trust ~/Downloads`) |
 | `/trust revoke <path>` | Remove a directory from the trusted list |
 | `/undo` | Remove last exchange |
 | `/clear` | Clear conversation history |
@@ -308,13 +318,19 @@ grip config show
 grip config set agents.defaults.model "anthropic/claude-sonnet-4"
 grip config set agents.defaults.max_tokens 16384
 grip config set agents.defaults.temperature 0.7
+
+# Unlimited tool iterations (default) — agent stops naturally when done
+grip config set agents.defaults.max_tool_iterations 0
+
+# Cap tool iterations (e.g. safety limit for automated tasks)
+grip config set agents.defaults.max_tool_iterations 50
 ```
 
 ### Key Sections
 
 | Section | Description |
 |---------|-------------|
-| `agents.defaults` | Engine (`claude_sdk`/`litellm`), SDK model, default model, max_tokens, temperature, memory_window, workspace path |
+| `agents.defaults` | Engine (`claude_sdk`/`litellm`), SDK model, default model, max_tokens, temperature, memory_window, max_tool_iterations (0=unlimited), workspace path |
 | `agents.profiles` | Named agent configs (model, tools_allowed, tools_denied, system_prompt_file) |
 | `agents.model_tiers` | Cost-aware routing: different models for low/medium/high complexity prompts |
 | `providers` | Per-provider API keys and base URLs |
@@ -358,6 +374,39 @@ grip config set agents.model_tiers.high "openrouter/anthropic/claude-sonnet-4"
 ```
 
 Simple queries (greetings, lookups) go to the cheap model. Complex tasks (architecture, debugging) go to the powerful model.
+
+## Task Tracking
+
+For multi-step tasks, the agent maintains a persistent task list in `workspace/tasks.json`. Active tasks are automatically injected into every system prompt so the agent always knows where it left off — even across long runs with context compaction.
+
+The agent uses two built-in tools:
+
+| Tool | Description |
+|------|-------------|
+| `todo_write` | Create or replace the full task list (persisted to `workspace/tasks.json`) |
+| `todo_read` | Read the current task list with statuses |
+
+**Example — how the agent handles a big task:**
+
+```
+User: "Build me a REST API with auth, CRUD for users, and tests"
+
+Agent:
+  1. Calls todo_write to create the task plan:
+     ○ [1] Design data models and schema — pending
+     ○ [2] Implement auth endpoints — pending
+     ○ [3] Implement user CRUD endpoints — pending
+     ○ [4] Write tests — pending
+
+  2. Updates status before each step:
+     ◑ [1] Design data models and schema — in_progress
+
+  3. Marks done, moves to next:
+     ● [1] Design data models and schema — completed
+     ◑ [2] Implement auth endpoints — in_progress
+```
+
+The task list is visible in `~/.grip/workspace/tasks.json` and cleared/updated as the agent progresses.
 
 ## MCP Servers
 
@@ -541,7 +590,8 @@ The API is designed for safe self-hosting:
 - **Security headers** — X-Content-Type-Options, X-Frame-Options, Content-Security-Policy
 - **Audit logging** — every request logged (method, path, status, duration, IP)
 - **Directory Trust Model** — grip is restricted to its workspace by default. Access to external directories must be explicitly granted via CLI prompt or the `/trust` command. [Learn more](#security-architecture).
-- **Shell Safety Guards** — every shell command is scanned against a comprehensive deny-list (rm -rf /, shutdown, etc.) before execution. [Learn more](#security-architecture).
+- **Shell Safety Guards** — every shell command is scanned against a comprehensive deny-list (50+ patterns) before execution. [Learn more](#security-architecture).
+- **Credential Scrubbing** — API keys, tokens, and passwords in tool outputs are automatically redacted before being stored in message history.
 - **Shield Policy** — context-based runtime threat feed injected into the system prompt. Evaluates tool calls, skill execution, MCP interactions, network requests, and secret access against active threats. [Learn more](#security-architecture).
 - **SecretStr config fields** — API keys and tokens use Pydantic `SecretStr`, automatically masked in logs and `repr()` output
 - **Sanitized errors** — no stack traces or file paths in responses
@@ -590,6 +640,16 @@ Every command the agent tries to run via the `exec` tool is scanned against a ro
 - **Credential Exfiltration**: Blocked `cat ~/.ssh/id_rsa`, `cat .env`, etc.
 - **Remote Code Injection**: Blocked `curl | bash` and similar pipe-to-shell patterns.
 
+#### 4. Credential Scrubbing
+
+Tool outputs are automatically scrubbed before being stored in message history. Patterns detected and redacted:
+
+- `sk-...` API keys (OpenAI/Anthropic-style)
+- `ghp_...` GitHub personal access tokens
+- `xoxb-...` Slack bot tokens
+- `Bearer <token>` authorization headers
+- `password=...` URL and config parameters
+
 > [!IMPORTANT]
 > While we strive for "perfect safety" through these multi-layered guards, no system is infallible. Always run grip with a non-root user and review critical actions.
 
@@ -599,16 +659,42 @@ Every command the agent tries to run via the `exec` tool is scanned against a ro
 - **Privacy by Design**: You maintain absolute control over the agent's data footprint.
 
 #### Managing Trust:
-- **In Chat (Telegram/Discord)**:
+- **In Chat (Telegram/Discord/Slack)**:
   - `/trust <path>` — Grant permanent access to a directory.
   - `/trust revoke <path>` — Remove access for a directory.
   - `/trust` — List all currently trusted directories.
-- **Manual Control**:
-  - Trust decisions are stored in `your_workspace/state/trusted_dirs.json`. You can manually edit or clear this file to manage access at any time.
+- **In CLI interactive mode**: Same `/trust` commands work in `grip agent`.
+- **Manual Control**: Trust decisions are stored in `your_workspace/state/trusted_dirs.json`. You can manually edit or clear this file to manage access at any time.
+
+## Long-Running Tasks
+
+grip is designed to handle complex, multi-step work without hitting context limits.
+
+### Unlimited Iterations
+
+By default, `max_tool_iterations = 0` (unlimited). The agent runs until it has nothing left to do — no artificial cap. For automated jobs where you want a safety limit:
+
+```bash
+grip config set agents.defaults.max_tool_iterations 100
+```
+
+### Mid-Run Compaction
+
+When in-flight messages exceed **50**, the agent automatically LLM-summarizes the older ones and compacts them into a single summary block, keeping the **20 most recent** messages intact. This prevents context overflow on long tasks (building full websites, large refactors, deep research) without losing continuity.
+
+The compaction is triggered mid-iteration — transparent to the user. A consolidation model can be configured to save tokens:
+
+```bash
+grip config set agents.defaults.consolidation_model "openrouter/google/gemini-flash-2.0"
+```
+
+### Task Persistence
+
+The agent creates a `tasks.json` in the workspace at the start of any multi-step task. If a session is interrupted or compacted, the task list is re-injected into the system prompt at the next iteration, so the agent picks up exactly where it left off.
 
 ## Docker
 
-Grip is Docker-ready and can be configured entirely via environment variables. The Dockerfile includes Node.js (required by the Claude Agent SDK) and runs as non-root user `grip` (UID 1000).
+Grip is Docker-ready and can be configured entirely via environment variables.
 
 ```bash
 # Build from source
@@ -671,7 +757,7 @@ uv sync --group dev
 # Run linter
 uv run ruff check grip/ tests/
 
-# Run tests (614 tests across 50 test files)
+# Run tests (770 tests across 50+ test files)
 uv run pytest
 
 # Run tests with coverage
@@ -688,15 +774,14 @@ uv build
 
 | Metric | Count |
 |--------|-------|
-| Python source files | 112 |
-| Lines of code | ~19,500 |
-| Test files | 50 |
-| Tests | 614 |
-| Built-in tools | 15 modules |
+| Python source files | 115 |
+| Lines of code | ~21,200 |
+| Tests | 770 |
+| Built-in tools | 26 (16 modules) |
 | Built-in skills | 15 |
 | LLM providers | 15 |
 | API endpoints | 27 |
-| CLI commands | 11 groups + 14 interactive slash commands |
+| CLI commands | 11 groups + 16 interactive slash commands |
 
 ## Contributing
 
@@ -726,4 +811,3 @@ MIT
 - Autonomous tool execution (especially shell/exec) carries inherent security risks.
 - Users are responsible for monitoring agent behavior and ensuring compliance with LLM provider terms.
 - Use this software at your own risk.
-

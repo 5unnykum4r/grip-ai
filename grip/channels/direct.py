@@ -61,12 +61,26 @@ class DirectSender:
             return value if value else ""
         return ""
 
+    def _resolve_bare_chat_id(self, chat_id: str) -> str:
+        """Find the channel name whose allow_from list contains this chat_id."""
+        for ch_name in ("telegram", "discord", "slack"):
+            ch = getattr(self._config, ch_name, None)
+            if ch and ch.enabled and ch.token and ch.token.get_secret_value():
+                if str(chat_id) in [str(i) for i in ch.allow_from]:
+                    return ch_name
+        return ""
+
     async def send_message(self, session_key: str, text: str) -> None:
         """Route a message to the correct channel API."""
         channel, chat_id = _parse_session_key(session_key)
         if not channel:
-            logger.warning("DirectSender: cannot route session_key '{}'", session_key)
-            return
+            # Treat session_key as a bare chat_id and auto-resolve channel
+            resolved = self._resolve_bare_chat_id(session_key)
+            if resolved:
+                channel, chat_id = resolved, session_key
+            else:
+                logger.warning("DirectSender: cannot route session_key '{}'", session_key)
+                return
 
         token = self._get_token(channel)
         if not token:
@@ -84,8 +98,12 @@ class DirectSender:
         """Route a file send to the correct channel API."""
         channel, chat_id = _parse_session_key(session_key)
         if not channel:
-            logger.warning("DirectSender: cannot route session_key '{}' for file", session_key)
-            return
+            resolved = self._resolve_bare_chat_id(session_key)
+            if resolved:
+                channel, chat_id = resolved, session_key
+            else:
+                logger.warning("DirectSender: cannot route session_key '{}' for file", session_key)
+                return
 
         token = self._get_token(channel)
         if not token:

@@ -1,16 +1,17 @@
 """Context builder: assembles the system prompt from workspace files.
 
 Reads identity files (AGENT.md, IDENTITY.md, SOUL.md, USER.md, SHIELD.md),
-appends a compact skill listing and metadata, and returns a single
-system message ready for the LLM.
+appends a compact skill listing, active todos, and metadata, and returns a
+single system message ready for the LLM.
 
 Tool definitions are already sent via the API's ``tools`` parameter, so
 the system prompt only carries identity, skills overview, shield policy,
-tone hints, and runtime metadata — keeping token usage minimal.
+active task list, tone hints, and runtime metadata — keeping token usage minimal.
 """
 
 from __future__ import annotations
 
+import json
 import platform
 import re
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from datetime import UTC, datetime
 from loguru import logger
 
 from grip import __version__
+from grip.config.schema import ChannelsConfig
 from grip.providers.types import LLMMessage
 from grip.workspace.manager import WorkspaceManager
 
@@ -89,15 +91,19 @@ class ContextBuilder:
       1. Agent identity (AGENT.md + IDENTITY.md + SOUL.md + USER.md)
       2. Shield policy (SHIELD.md — runtime threat feed evaluation rules)
       3. Compact skill listing (name + one-line description only)
-      4. Tone adaptation (based on user message sentiment)
-      5. Runtime metadata (datetime, platform, version)
+      4. Active task list (from workspace/tasks.json, pending/in_progress only)
+      5. Tone adaptation (based on user message sentiment)
+      6. Runtime metadata (datetime, platform, version)
 
     Tool definitions are NOT included here — they travel via the API's
     ``tools`` parameter and are therefore excluded to save tokens.
     """
 
-    def __init__(self, workspace: WorkspaceManager) -> None:
+    def __init__(
+        self, workspace: WorkspaceManager, channels: ChannelsConfig | None = None
+    ) -> None:
         self._workspace = workspace
+        self._channels = channels
         self._cached_identity: str | None = None
 
     def invalidate_cache(self) -> None:
@@ -121,11 +127,15 @@ class ContextBuilder:
         if skills_listing:
             parts.append(skills_listing)
 
+        todos_section = self._build_todos_section()
+        if todos_section:
+            parts.append(todos_section)
+
         tone_hint = _detect_tone_hint(user_message)
         if tone_hint:
             parts.append(tone_hint)
 
-        parts.append(self._build_metadata_section(session_key=session_key))
+        parts.append(self._build_metadata_section(session_key=session_key, channels=self._channels))
 
         system_prompt = "\n\n---\n\n".join(parts)
         logger.debug("System prompt built: {} chars", len(system_prompt))
@@ -176,8 +186,42 @@ class ContextBuilder:
         lines.append("\nUse the read_file tool to load a skill's full instructions when needed.")
         return "\n".join(lines)
 
+    def _build_todos_section(self) -> str:
+        """Read workspace/tasks.json and inject active (pending/in_progress) todos.
+
+        Returns empty string when no tasks file exists or all tasks are done.
+        This is NOT cached — tasks change during a run and must be fresh each call.
+        """
+        tasks_path = self._workspace.root / "tasks.json"
+        if not tasks_path.exists():
+            return ""
+
+        try:
+            todos = json.loads(tasks_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.debug("Failed to read tasks.json for system prompt: {}", exc)
+            return ""
+
+        active = [t for t in todos if t.get("status") in ("pending", "in_progress")]
+        if not active:
+            return ""
+
+        status_icons = {"pending": "○", "in_progress": "◑"}
+        lines = [f"## Active Tasks ({len(active)} remaining)\n"]
+        for t in active:
+            icon = status_icons.get(t.get("status", "pending"), "○")
+            priority = t.get("priority", "")
+            priority_label = f" [{priority}]" if priority else ""
+            lines.append(
+                f"{icon} [{t['id']}]{priority_label} {t['content']} — {t.get('status')}"
+            )
+        lines.append("\nUpdate tasks via todo_write as you progress through them.")
+        return "\n".join(lines)
+
     @staticmethod
-    def _build_metadata_section(session_key: str = "") -> str:
+    def _build_metadata_section(
+        session_key: str = "", channels: ChannelsConfig | None = None
+    ) -> str:
         now = datetime.now(UTC)
         lines = [
             "## Runtime Info\n",
@@ -188,4 +232,21 @@ class ContextBuilder:
         ]
         if session_key:
             lines.append(f"- Session key: {session_key}")
+
+        if channels:
+            connected: list[str] = []
+            for ch_name in ("telegram", "discord", "slack"):
+                ch = getattr(channels, ch_name, None)
+                if ch and ch.enabled and ch.token and ch.token.get_secret_value():
+                    ids = ", ".join(str(i) for i in ch.allow_from) if ch.allow_from else "unknown"
+                    connected.append(f"{ch_name} (chat_id: {ids})")
+            if connected:
+                lines.append(
+                    "- Connected channels: "
+                    + "; ".join(connected)
+                    + ". Use send_message with the listed chat_id to reach the user."
+                )
+            else:
+                lines.append("- Connected channels: none")
+
         return "\n".join(lines)

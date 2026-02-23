@@ -51,6 +51,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "/mcp": ("List configured MCP servers", "Info"),
     "/tasks": ("List scheduled cron tasks", "Info"),
     "/status": ("Show session and system info", "Info"),
+    "/trust": ("Grant agent access to a folder (/trust /path/to/dir)", "Config"),
+    "/trust revoke": ("Revoke agent access to a folder (/trust revoke /path)", "Config"),
     "/help": ("Show this command reference", "Info"),
     "/exit": ("Quit interactive mode", ""),
 }
@@ -178,7 +180,9 @@ def _get_mcp_manager(engine: EngineProtocol):
     return getattr(registry, "mcp_manager", None) if registry else None
 
 
-def _build_engine(config: GripConfig) -> tuple[EngineProtocol, SessionManager, MemoryManager]:
+def _build_engine(
+    config: GripConfig,
+) -> tuple[EngineProtocol, SessionManager, MemoryManager, "TrustManager"]:
     """Wire up the engine stack from config using the engine factory.
 
     TOOLS.md is generated from the actual engine's tools:
@@ -190,7 +194,22 @@ def _build_engine(config: GripConfig) -> tuple[EngineProtocol, SessionManager, M
     session_mgr = SessionManager(ws.root / "sessions")
     memory_mgr = MemoryManager(ws.root)
 
-    engine = create_engine(config, ws, session_mgr, memory_mgr)
+    from grip.trust import TrustManager
+
+    trust_mgr = TrustManager(ws.root / "state")
+
+    async def _cli_trust_prompt(directory: Path) -> bool:
+        from InquirerPy import inquirer
+
+        return await asyncio.to_thread(
+            lambda: inquirer.confirm(
+                message=f"Agent wants access to '{directory}'. Allow?",
+                default=False,
+            ).execute()
+        )
+
+    trust_mgr.set_prompt(_cli_trust_prompt)
+    engine = create_engine(config, ws, session_mgr, memory_mgr, trust_mgr=trust_mgr)
 
     from grip.channels.direct import wire_direct_sender
 
@@ -218,7 +237,7 @@ def _build_engine(config: GripConfig) -> tuple[EngineProtocol, SessionManager, M
 
     (ws.root / "TOOLS.md").write_text(tools_md, encoding="utf-8")
 
-    return engine, session_mgr, memory_mgr
+    return engine, session_mgr, memory_mgr, trust_mgr
 
 
 def _print_response(text: str, no_markdown: bool) -> None:
@@ -424,7 +443,7 @@ async def _one_shot(
     config: GripConfig, message: str, *, model: str | None, no_markdown: bool
 ) -> None:
     """Send a single message, print the response, and exit."""
-    engine, _, _ = _build_engine(config)
+    engine, _, _, _ = _build_engine(config)
 
     with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
         result = await engine.run(message, session_key="cli:oneshot", model=model)
@@ -440,7 +459,7 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.patch_stdout import patch_stdout
 
-    engine, session_mgr, memory_mgr = _build_engine(config)
+    engine, session_mgr, memory_mgr, trust_mgr = _build_engine(config)
     session_key = _SESSION_KEY
 
     history_dir = Path("~/.grip/history").expanduser()
@@ -680,6 +699,38 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
 
                     elif cmd == "/status":
                         _print_status(session_key, session_mgr, memory_mgr, model, config)
+                        continue
+
+                    elif cmd == "/trust":
+                        if not args_parts:
+                            trusted = trust_mgr.trusted_directories
+                            ws_path = config.agents.defaults.workspace.expanduser().resolve()
+                            lines = [f"  [dim]Workspace :[/dim]  [green]{ws_path}[/green] (always)"]
+                            for t in trusted:
+                                lines.append(f"  [dim]Trusted   :[/dim]  [cyan]{t}[/cyan]")
+                            if not trusted:
+                                lines.append("  [dim]No extra folders trusted yet.[/dim]")
+                            lines.append("")
+                            lines.append("  [dim]Grant :[/dim]  /trust /path/to/folder")
+                            lines.append("  [dim]Revoke:[/dim]  /trust revoke /path/to/folder")
+                            console.print(
+                                Panel(
+                                    "\n".join(lines),
+                                    title="[bold]Trusted Folders[/bold]",
+                                    expand=False,
+                                    border_style="dim",
+                                )
+                            )
+                        elif args_parts[0] == "revoke" and len(args_parts) > 1:
+                            revoke_path = Path(args_parts[1]).expanduser().resolve()
+                            if trust_mgr.revoke(revoke_path):
+                                console.print(f"[yellow]Revoked access to: {revoke_path}[/yellow]")
+                            else:
+                                console.print(f"[dim]{revoke_path} was not trusted.[/dim]")
+                        else:
+                            trust_path = Path(args_parts[0]).expanduser().resolve()
+                            trust_mgr.trust(trust_path)
+                            console.print(f"[green]Agent can now access: {trust_path}[/green]")
                         continue
 
                     elif cmd == "/help":

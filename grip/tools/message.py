@@ -78,7 +78,12 @@ class MessageTool(Tool):
         text = params["text"]
         channel = params.get("channel")
         chat_id = params.get("chat_id")
-        target_key = f"{channel}:{chat_id}" if channel and chat_id else ctx.session_key
+        if channel and chat_id:
+            target_key = f"{channel}:{chat_id}"
+        elif chat_id:
+            target_key = str(chat_id)
+        else:
+            target_key = ctx.session_key
 
         if self._callback:
             try:
@@ -162,7 +167,12 @@ class SendFileTool(Tool):
         caption = params.get("caption", "")
         channel = params.get("channel")
         chat_id = params.get("chat_id")
-        target_key = f"{channel}:{chat_id}" if channel and chat_id else ctx.session_key
+        if channel and chat_id:
+            target_key = f"{channel}:{chat_id}"
+        elif chat_id:
+            target_key = str(chat_id)
+        else:
+            target_key = ctx.session_key
 
         path = Path(file_path)
         if not path.is_file():
