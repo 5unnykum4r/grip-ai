@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from claude_agent_sdk import HookMatcher
 from loguru import logger
 
 from grip.tools.shell import _is_dangerous
@@ -26,16 +27,15 @@ if TYPE_CHECKING:
 def build_pre_tool_use_hook(
     workspace_root: Path,
     trust_mgr: TrustManager | None = None,
-):
-    """Return a PreToolUse hook that enforces trust and blocks dangerous commands.
-
-    When returned dict has ``decision: "block"``, the SDK will skip the tool call
-    and surface the ``message`` to the model.  Returning ``None`` means "allow".
-    """
+) -> list[HookMatcher]:
+    """Return a PreToolUse HookMatcher list that enforces trust and blocks dangerous commands."""
 
     resolved_workspace = workspace_root.resolve()
 
-    def pre_tool_use(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
+    async def pre_tool_use(input_data, tool_use_id, context) -> dict[str, Any]:
+        tool_name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input", {})
+
         # Block dangerous shell commands using the same multi-layer checks as ShellTool
         if tool_name == "Bash":
             command = tool_input.get("command", "")
@@ -48,7 +48,7 @@ def build_pre_tool_use_hook(
                 )
                 return {
                     "decision": "block",
-                    "message": danger,
+                    "reason": danger,
                 }
 
         # Enforce trust for file operations outside workspace
@@ -63,35 +63,40 @@ def build_pre_tool_use_hook(
                     )
                     return {
                         "decision": "block",
-                        "message": (
-                            f"Directory not trusted: {resolved.parent}. Use /trust to allow access."
+                        "reason": (
+                            f"Directory not trusted: {resolved.parent}. "
+                            "Use /trust to allow access."
                         ),
                     }
 
-        return None
+        return {}
 
-    return pre_tool_use
-
-
-def build_post_tool_use_hook():
-    """Return a PostToolUse hook that logs tool execution for observability."""
-
-    def post_tool_use(tool_name: str, tool_input: dict[str, Any], tool_output: str) -> None:
-        logger.debug("SDK tool executed: {} -> {} chars output", tool_name, len(tool_output))
-
-    return post_tool_use
+    return [HookMatcher(hooks=[pre_tool_use])]
 
 
-def build_stop_hook(memory_mgr: MemoryManager | None):
-    """Return a Stop hook that persists a conversation summary to history.
+def build_post_tool_use_hook() -> list[HookMatcher]:
+    """Return a PostToolUse HookMatcher list that logs tool execution for observability."""
 
-    Called by the SDK after the agent run completes. Saves a truncated summary
-    so future sessions can recall context from past interactions.
-    """
+    async def post_tool_use(input_data, tool_use_id, context) -> dict[str, Any]:
+        tool_name = input_data.get("tool_name", "")
+        tool_response = input_data.get("tool_response", "")
+        logger.debug(
+            "SDK tool executed: {} -> {} chars output", tool_name, len(str(tool_response))
+        )
+        return {}
 
-    def stop_hook(conversation_summary: str) -> None:
-        if memory_mgr and conversation_summary:
-            memory_mgr.append_history(f"[Session summary] {conversation_summary[:500]}")
-            logger.debug("Stop hook: saved conversation summary to history")
+    return [HookMatcher(hooks=[post_tool_use])]
 
-    return stop_hook
+
+def build_stop_hook(memory_mgr: MemoryManager | None) -> list[HookMatcher]:
+    """Return a Stop HookMatcher list that persists a conversation summary to history."""
+
+    async def stop_hook(input_data, tool_use_id, context) -> dict[str, Any]:
+        if memory_mgr:
+            session_id = input_data.get("session_id", "")
+            if session_id:
+                memory_mgr.append_history(f"[Session ended] {session_id}")
+                logger.debug("Stop hook: saved session end marker to history")
+        return {}
+
+    return [HookMatcher(hooks=[stop_hook])]

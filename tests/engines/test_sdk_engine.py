@@ -59,8 +59,18 @@ def _mock_create_sdk_mcp_server(name, version="1.0.0", tools=None):
     return {"type": "sdk", "name": name}
 
 
+class _MockHookMatcher:
+    """Mock for claude_agent_sdk.HookMatcher."""
+
+    def __init__(self, matcher=None, hooks=None, timeout=None):
+        self.matcher = matcher
+        self.hooks = hooks or []
+        self.timeout = timeout
+
+
 _mock_sdk.tool = _mock_tool_decorator
 _mock_sdk.create_sdk_mcp_server = _mock_create_sdk_mcp_server
+_mock_sdk.HookMatcher = _MockHookMatcher
 _mock_sdk.ClaudeAgentOptions = MagicMock(name="ClaudeAgentOptions")
 _mock_sdk.AssistantMessage = type("AssistantMessage", (), {})
 _mock_sdk.ResultMessage = type("ResultMessage", (), {})

@@ -353,9 +353,9 @@ class SDKRunner(EngineProtocol):
             allowed_tools=allowed_tools if allowed_tools else None,
             env=env_opts if env_opts else None,
             hooks={
-                "pre_tool_use": pre_hook,
-                "post_tool_use": post_hook,
-                "stop": stop_hook,
+                "PreToolUse": pre_hook,
+                "PostToolUse": post_hook,
+                "Stop": stop_hook,
             },
         )
 
