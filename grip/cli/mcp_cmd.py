@@ -70,6 +70,10 @@ MCP_PRESETS: dict[str, dict] = {
         "command": "npx",
         "args": ["-y", "tomba-mcp-server"],
     },
+    "supabase": {
+        "url": "https://mcp.supabase.com/mcp",
+        "type": "http",
+    },
 }
 
 
@@ -85,6 +89,16 @@ def mcp_add(
     ),
     header: list[str] | None = typer.Option(  # noqa: B008
         None, "--header", help="HTTP headers (e.g., Authorization:Bearer token)"
+    ),
+    server_type: str | None = typer.Option(
+        None, "--type", help="Transport type: http, sse, or stdio (auto-detected if omitted)"
+    ),
+    timeout: int = typer.Option(60, "--timeout", help="Connection timeout in seconds"),
+    oauth_client_id: str | None = typer.Option(None, "--oauth-client-id", help="OAuth 2.0 client ID"),
+    oauth_auth_url: str | None = typer.Option(None, "--oauth-auth-url", help="OAuth authorization URL"),
+    oauth_token_url: str | None = typer.Option(None, "--oauth-token-url", help="OAuth token exchange URL"),
+    oauth_scopes: str | None = typer.Option(
+        None, "--oauth-scopes", help="Comma-separated OAuth scopes"
     ),
 ) -> None:
     """Add an MCP server configuration."""
@@ -119,6 +133,23 @@ def mcp_add(
                 headers[key.strip()] = value.strip()
         if headers:
             server_config["headers"] = headers
+
+    if server_type:
+        server_config["type"] = server_type
+    if timeout != 60:
+        server_config["timeout"] = timeout
+
+    if oauth_client_id or oauth_auth_url or oauth_token_url:
+        oauth: dict = {}
+        if oauth_client_id:
+            oauth["client_id"] = oauth_client_id
+        if oauth_auth_url:
+            oauth["auth_url"] = oauth_auth_url
+        if oauth_token_url:
+            oauth["token_url"] = oauth_token_url
+        if oauth_scopes:
+            oauth["scopes"] = oauth_scopes.split(",")
+        server_config["oauth"] = oauth
 
     mcp_servers[name] = server_config
 
@@ -179,17 +210,19 @@ def mcp_list() -> None:
     table.add_column("Name", style="cyan")
     table.add_column("Type", style="magenta")
     table.add_column("Config", style="green")
+    table.add_column("Enabled", justify="center")
 
     for name, srv in mcp_servers.items():
         if srv.url:
             config_str = srv.url
-            srv_type = "HTTP"
+            srv_type = srv.type.upper() if srv.type else "HTTP"
         else:
             parts = [srv.command] + (srv.args or [])
             config_str = " ".join(parts)
             srv_type = "stdio"
 
-        table.add_row(name, srv_type, config_str)
+        enabled_str = "[green]Yes[/green]" if srv.enabled else "[red]No[/red]"
+        table.add_row(name, srv_type, config_str, enabled_str)
 
     console.print(table)
 
@@ -260,6 +293,66 @@ def mcp_presets(
         console.print(f"[yellow]Skipped: {', '.join(skipped)}[/yellow]")
 
 
+@mcp_app.command(name="login")
+def mcp_login(
+    name: str = typer.Argument(..., help="Name of the MCP server to authenticate with"),
+) -> None:
+    """Run the OAuth 2.0 browser login flow for an MCP server.
+
+    For servers with explicit OAuth config: uses grip's OAuthFlow.
+    For HTTP/SSE servers (e.g. Supabase): connects with force_oauth=True
+    so the MCP library handles dynamic client registration and login.
+    """
+    import asyncio
+
+    from grip.cli.app import state
+
+    config = load_config(state.config_path)
+    servers = config.tools.mcp_servers
+
+    if name not in servers:
+        console.print(f"[red]Error: MCP server '{name}' not found[/red]")
+        raise typer.Exit(1)
+
+    srv = servers[name]
+
+    if srv.oauth:
+        from grip.security.oauth import OAuthFlow, OAuthFlowError
+        from grip.security.token_store import TokenStore
+
+        flow = OAuthFlow(srv.oauth, name)
+        console.print(f"[dim]Opening browser for {name} login...[/dim]")
+        try:
+            token = asyncio.run(flow.execute())
+            store = TokenStore()
+            store.save(name, token)
+            console.print(f"[green]Login successful for '{name}'![/green]")
+        except OAuthFlowError as exc:
+            console.print(f"[red]Login failed: {exc}[/red]")
+            raise typer.Exit(1) from exc
+
+    elif srv.url:
+        from grip.tools.mcp import MCPConnection
+
+        console.print(f"[dim]Connecting to {name} (will open browser for login)...[/dim]")
+
+        async def _login():
+            conn = MCPConnection(name, srv, force_oauth=True)
+            await conn.connect()
+            return conn
+
+        conn = asyncio.run(_login())
+        if conn.is_connected:
+            console.print(f"[green]Login successful for '{name}' ({len(conn.tools)} tools)[/green]")
+        else:
+            console.print(f"[red]Login failed: {conn.error}[/red]")
+            raise typer.Exit(1)
+
+    else:
+        console.print(f"[red]Error: MCP server '{name}' has no URL or OAuth configuration[/red]")
+        raise typer.Exit(1)
+
+
 def _print_server_config(name: str, config: dict) -> None:
     """Print the server configuration in a nice format."""
     if "url" in config:
@@ -272,3 +365,5 @@ def _print_server_config(name: str, config: dict) -> None:
         console.print(f"  [dim]Env:[/dim] {list(config['env'].keys())}")
     if "headers" in config:
         console.print(f"  [dim]Headers:[/dim] {list(config['headers'].keys())}")
+    if "oauth" in config:
+        console.print(f"  [dim]OAuth:[/dim] {config['oauth'].get('auth_url', 'configured')}")

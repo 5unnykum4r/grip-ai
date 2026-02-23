@@ -11,7 +11,7 @@ self-hosted deployments.
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 
 
 class SlidingWindowRateLimiter:
@@ -22,10 +22,13 @@ class SlidingWindowRateLimiter:
     current count is compared against the limit.
     """
 
+    _CLEANUP_INTERVAL = 100
+
     def __init__(self, max_requests: int, window_seconds: int = 60) -> None:
         self._max_requests = max_requests
         self._window = window_seconds
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._check_count = 0
 
     def is_allowed(self, key: str) -> tuple[bool, int, float]:
         """Check if a request from `key` is allowed.
@@ -36,13 +39,18 @@ class SlidingWindowRateLimiter:
             - remaining: number of requests left in the current window
             - retry_after: seconds until the oldest entry expires (0 if allowed)
         """
+        self._check_count += 1
+        if self._check_count >= self._CLEANUP_INTERVAL:
+            self._check_count = 0
+            self.cleanup()
+
         now = time.monotonic()
         cutoff = now - self._window
         timestamps = self._requests[key]
 
         # Prune expired entries
         while timestamps and timestamps[0] <= cutoff:
-            timestamps.pop(0)
+            timestamps.popleft()
 
         if len(timestamps) >= self._max_requests:
             retry_after = timestamps[0] + self._window - now

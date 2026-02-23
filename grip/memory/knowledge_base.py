@@ -66,6 +66,7 @@ class KnowledgeBase:
         self._memory_dir = memory_dir
         self._kb_path = memory_dir / "knowledge.json"
         self._entries: dict[str, KnowledgeEntry] = self._load()
+        self._dirty: bool = False
 
     def _load(self) -> dict[str, KnowledgeEntry]:
         """Load knowledge entries from disk."""
@@ -101,6 +102,20 @@ class KnowledgeBase:
         tmp = self._kb_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.rename(self._kb_path)
+        self._dirty = False
+
+    def _mark_dirty(self) -> None:
+        """Mark the knowledge base as having unsaved changes."""
+        self._dirty = True
+
+    def flush(self) -> None:
+        """Write to disk only if there are unsaved changes.
+
+        Called after a batch of add() calls (e.g. from LearningEngine)
+        to coalesce multiple mutations into a single disk write.
+        """
+        if self._dirty:
+            self._save()
 
     def add(
         self,
@@ -127,7 +142,7 @@ class KnowledgeBase:
             existing = self._entries[entry_id]
             existing.accessed_at = time.time()
             existing.access_count += 1
-            self._save()
+            self._mark_dirty()
             logger.debug("Knowledge entry already exists (id={}), updated access time", entry_id)
             return existing
 
@@ -139,7 +154,7 @@ class KnowledgeBase:
             tags=tags or [],
         )
         self._entries[entry_id] = entry
-        self._save()
+        self._mark_dirty()
         logger.info("Added knowledge entry: {} (category={})", entry_id, category)
         return entry
 
@@ -149,6 +164,7 @@ class KnowledgeBase:
         if entry:
             entry.accessed_at = time.time()
             entry.access_count += 1
+            self._mark_dirty()
         return entry
 
     def search(

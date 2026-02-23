@@ -20,8 +20,15 @@ class WorkflowStore:
         self._dir = workflows_dir
         self._dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _validate_name(name: str) -> None:
+        """Reject names containing path traversal characters."""
+        if "/" in name or "\\" in name or ".." in name:
+            raise ValueError(f"Invalid workflow name: {name!r}")
+
     def save(self, workflow: WorkflowDef) -> Path:
         """Save a workflow definition to disk."""
+        self._validate_name(workflow.name)
         path = self._dir / f"{workflow.name}.json"
         tmp = path.with_suffix(".tmp")
         tmp.write_text(
@@ -34,6 +41,7 @@ class WorkflowStore:
 
     def load(self, name: str) -> WorkflowDef | None:
         """Load a workflow by name."""
+        self._validate_name(name)
         path = self._dir / f"{name}.json"
         if not path.exists():
             return None
@@ -50,6 +58,7 @@ class WorkflowStore:
 
     def delete(self, name: str) -> bool:
         """Delete a workflow by name."""
+        self._validate_name(name)
         path = self._dir / f"{name}.json"
         if path.exists():
             path.unlink()

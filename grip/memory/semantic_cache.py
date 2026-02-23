@@ -41,6 +41,9 @@ class SemanticCache:
         self._max_entries = max_entries
         self._enabled = enabled
         self._cache: dict[str, dict] = self._load()
+        self._dirty = False
+        self._writes_since_flush = 0
+        self._flush_interval = 10
 
     def _load(self) -> dict[str, dict]:
         """Load cache from disk, discarding expired entries."""
@@ -114,7 +117,17 @@ class SemanticCache:
             for k in sorted_keys[:excess]:
                 del self._cache[k]
 
-        self._save()
+        self._dirty = True
+        self._writes_since_flush += 1
+        if self._writes_since_flush >= self._flush_interval:
+            self.flush()
+
+    def flush(self) -> None:
+        """Write pending changes to disk if dirty."""
+        if self._dirty:
+            self._save()
+            self._dirty = False
+            self._writes_since_flush = 0
 
     def invalidate(self, message: str, model: str) -> bool:
         """Remove a specific cache entry. Returns True if entry existed."""

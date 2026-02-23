@@ -14,21 +14,6 @@ import httpx
 from loguru import logger
 
 
-class _PooledSession:
-    """Internal session class for connection pool context manager."""
-
-    def __init__(self, pool: ConnectionPool) -> None:
-        self._pool = pool
-        self._client: httpx.AsyncClient | None = None
-
-    async def __aenter__(self) -> httpx.AsyncClient:
-        self._client = await self._pool.get_client()
-        return self._client
-
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
-
-
 class ConnectionPool:
     """Async HTTP connection pool with limits."""
 
@@ -66,15 +51,11 @@ class ConnectionPool:
 
     async def close(self) -> None:
         """Close the connection pool."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-            logger.debug("Closed HTTP connection pool")
-
-    def session(self) -> Any:
-        """Context manager for a pooled HTTP session."""
-        return _PooledSession(self)
-
+        async with self._lock:
+            if self._client is not None:
+                await self._client.aclose()
+                self._client = None
+                logger.debug("Closed HTTP connection pool")
 
 class ProviderPool:
     """Connection pool for LLM providers."""

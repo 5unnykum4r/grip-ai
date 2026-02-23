@@ -227,12 +227,6 @@ class TestSDKRunnerConstructor:
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         assert runner._cwd == str(mock_workspace.root)
 
-    def test_initializes_empty_clients_dict(
-        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
-    ):
-        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
-        assert runner._clients == {}
-
     def test_initializes_callbacks_to_none(
         self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
@@ -243,15 +237,17 @@ class TestSDKRunnerConstructor:
     def test_resolves_api_key_from_config(
         self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
-        _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
-        assert os.environ.get("ANTHROPIC_API_KEY") == "test-key-12345"
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        assert runner._api_key == "test-key-12345"
+        # API key should NOT be leaked into os.environ
+        assert os.environ.get("ANTHROPIC_API_KEY") != "test-key-12345"
 
     def test_falls_back_to_env_api_key(
         self, config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key-67890"}):
-            _build_runner(config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr)
-            assert os.environ.get("ANTHROPIC_API_KEY") == "env-key-67890"
+            runner = _build_runner(config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr)
+            assert runner._api_key == "env-key-67890"
 
     def test_stores_trust_manager(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         fake_trust = MagicMock(name="trust_mgr")
@@ -330,6 +326,148 @@ class TestBuildMCPConfig:
         runner = _build_runner(config_with_mcp, mock_workspace, mock_session_mgr, mock_memory_mgr)
         result = runner._build_mcp_config()
         assert len(result) == 2
+
+    def test_skips_disabled_servers(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "enabled_server": {"command": "npx", "args": ["-y", "test"]},
+                    "disabled_server": {"command": "npx", "args": ["-y", "off"], "enabled": False},
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        result = runner._build_mcp_config()
+        names = [e["name"] for e in result]
+        assert "enabled_server" in names
+        assert "disabled_server" not in names
+
+    def test_passes_type_for_url_server(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "sse_server": {
+                        "url": "https://mcp.example.com/sse",
+                        "type": "sse",
+                    },
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        result = runner._build_mcp_config()
+        assert len(result) == 1
+        assert result[0]["type"] == "sse"
+
+    def test_omits_type_when_empty(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "plain": {"url": "https://mcp.example.com"},
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        result = runner._build_mcp_config()
+        assert len(result) == 1
+        assert "type" not in result[0]
+
+    def test_supabase_http_type_passthrough(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "supabase": {
+                        "url": "https://mcp.supabase.com/mcp",
+                        "type": "http",
+                    },
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        result = runner._build_mcp_config()
+        assert len(result) == 1
+        assert result[0]["name"] == "supabase"
+        assert result[0]["url"] == "https://mcp.supabase.com/mcp"
+        assert result[0]["type"] == "http"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _collect_allowed_tools
+# ---------------------------------------------------------------------------
+
+
+class TestCollectAllowedTools:
+    def test_empty_when_no_servers(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        assert runner._collect_allowed_tools() == []
+
+    def test_merges_from_multiple_servers(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "s1": {
+                        "command": "npx",
+                        "args": [],
+                        "allowed_tools": ["mcp__s1__read", "mcp__s1__write"],
+                    },
+                    "s2": {
+                        "url": "https://s2.example.com",
+                        "allowed_tools": ["mcp__s2__*"],
+                    },
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        tools = runner._collect_allowed_tools()
+        assert "mcp__s1__read" in tools
+        assert "mcp__s1__write" in tools
+        assert "mcp__s2__*" in tools
+        assert len(tools) == 3
+
+    def test_skips_disabled_servers(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {"workspace": str(tmp_workspace), "semantic_cache_enabled": False}},
+            tools={
+                "restrict_to_workspace": True,
+                "mcp_servers": {
+                    "active": {"command": "npx", "args": [], "allowed_tools": ["mcp__active__*"]},
+                    "off": {"command": "npx", "args": [], "allowed_tools": ["mcp__off__*"], "enabled": False},
+                },
+            },
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        tools = runner._collect_allowed_tools()
+        assert "mcp__active__*" in tools
+        assert "mcp__off__*" not in tools
+
+    def test_empty_allowed_tools_produces_empty(
+        self, config_with_mcp, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config_with_mcp, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        assert runner._collect_allowed_tools() == []
 
 
 # ---------------------------------------------------------------------------
@@ -648,17 +786,6 @@ class TestSDKRunnerSessionManagement:
         """consolidate_session just logs (SDK handles context internally)."""
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         await runner.consolidate_session("test:session")
-
-    @pytest.mark.asyncio
-    async def test_reset_session_clears_client(
-        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
-    ):
-        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
-        runner._clients["test:session"] = MagicMock()
-
-        await runner.reset_session("test:session")
-
-        assert "test:session" not in runner._clients
 
     @pytest.mark.asyncio
     async def test_reset_session_deletes_via_session_mgr(

@@ -6,7 +6,9 @@ All token comparisons use secrets.compare_digest to prevent timing attacks.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -28,7 +30,7 @@ def ensure_auth_token(config: GripConfig, config_path: Path | None) -> str:
     """
     global _GENERATED_TOKEN  # noqa: PLW0603
 
-    token = config.gateway.api.auth_token
+    token = config.gateway.api.auth_token.get_secret_value()
     if token:
         return token
 
@@ -60,6 +62,8 @@ def _persist_token(config: GripConfig, config_path: Path | None, token: str) -> 
         data.setdefault("gateway", {}).setdefault("api", {})["auth_token"] = token
         tmp = resolved.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        with contextlib.suppress(OSError):
+            os.chmod(tmp, 0o600)
         tmp.rename(resolved)
     except Exception as exc:
         logger.warning("Could not persist auto-generated token: {}", exc)

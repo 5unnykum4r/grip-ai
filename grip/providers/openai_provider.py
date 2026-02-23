@@ -166,12 +166,15 @@ class OpenAICompatProvider(LLMProvider):
 
     @staticmethod
     def _safe_parse_json(text: str) -> dict[str, Any]:
+        if not text or not text.strip():
+            return {}
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
             import json_repair
 
-            return json_repair.loads(text)
+            parsed = json_repair.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
 
     async def close(self) -> None:
         """Close the underlying HTTP client. Call on shutdown."""

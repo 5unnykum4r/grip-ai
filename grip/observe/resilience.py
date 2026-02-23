@@ -85,7 +85,7 @@ def validate_config_on_startup(config) -> list[str]:
             "This allows unrestricted file/shell access over HTTP."
         )
 
-    if config.gateway.host == "0.0.0.0" and not config.gateway.api.auth_token:
+    if config.gateway.host == "0.0.0.0" and not config.gateway.api.auth_token.get_secret_value():
         warnings.append(
             "API bound to 0.0.0.0 without an auth token. "
             "A token will be auto-generated on first API start."

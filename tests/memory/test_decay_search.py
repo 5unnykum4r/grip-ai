@@ -122,3 +122,64 @@ class TestMemoryCompaction:
     def test_single_entry_returns_zero(self, memory_mgr: MemoryManager):
         memory_mgr.write_memory("- Single entry\n")
         assert memory_mgr.compact_memory() == 0
+
+    def test_optimized_matches_brute_force(self, memory_mgr: MemoryManager):
+        """Inverted-index optimized compact_memory produces identical results to brute-force."""
+        from grip.memory.manager import _tokenize
+
+        entries = [
+            "- [pref] User prefers dark mode for editing code",
+            "- [pref] User prefers dark mode for editing code always",
+            "- [project] Working on grip-ai platform",
+            "- [fact] Python is a great programming language",
+            "- [fact] Python is a wonderful programming language for data",
+            "- [pref] Favorite color is blue",
+            "- [project] Building REST API with FastAPI",
+            "- [project] Building REST API with FastAPI framework",
+            "- [fact] The earth revolves around the sun",
+            "- [pref] Prefers vim keybindings in editor",
+        ]
+        threshold = 0.7
+
+        # Brute-force reference
+        token_sets = [set(_tokenize(e)) for e in entries]
+        keep_bf = [True] * len(entries)
+        for i in range(len(entries)):
+            if not keep_bf[i]:
+                continue
+            for j in range(i + 1, len(entries)):
+                if not keep_bf[j] or not token_sets[i] or not token_sets[j]:
+                    continue
+                inter = len(token_sets[i] & token_sets[j])
+                union = len(token_sets[i] | token_sets[j])
+                if union > 0 and inter / union >= threshold:
+                    keep_bf[j] = False
+        expected = [e for e, k in zip(entries, keep_bf, strict=True) if k]
+
+        # Optimized path
+        memory_mgr.write_memory("\n".join(entries) + "\n")
+        memory_mgr.compact_memory(similarity_threshold=threshold)
+        actual_lines = [
+            line.strip()
+            for line in memory_mgr.read_memory().splitlines()
+            if line.strip()
+        ]
+
+        assert actual_lines == expected
+
+    def test_compact_memory_scales(self, memory_mgr: MemoryManager):
+        """2000 entries should compact in under 5 seconds."""
+        import time
+
+        entries = [f"- [entry] item number {i} with extra words alpha beta" for i in range(2000)]
+        # Add 200 near-duplicates (every 10th entry gets a variant)
+        for i in range(0, 2000, 10):
+            entries.append(f"- [entry] item number {i} with extra words alpha beta gamma")
+
+        memory_mgr.write_memory("\n".join(entries) + "\n")
+        start = time.monotonic()
+        removed = memory_mgr.compact_memory(similarity_threshold=0.7)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 5.0, f"compact_memory took {elapsed:.2f}s on 2200 entries"
+        assert removed > 0

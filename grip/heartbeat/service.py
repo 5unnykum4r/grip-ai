@@ -11,6 +11,7 @@ If HEARTBEAT.md is missing or empty, the heartbeat is silently skipped.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 from loguru import logger
@@ -34,7 +35,7 @@ class HeartbeatService:
         self._heartbeat_file = workspace_root / "HEARTBEAT.md"
         self._engine = engine
         self._config = config
-        self._running = False
+        self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
         """Start the heartbeat loop. Runs until cancelled."""
@@ -42,17 +43,19 @@ class HeartbeatService:
             logger.debug("Heartbeat service disabled")
             return
 
-        self._running = True
+        self._stop_event.clear()
         interval = self._config.interval_minutes * 60
         logger.info("Heartbeat service started (interval: {}min)", self._config.interval_minutes)
 
-        while self._running:
-            await asyncio.sleep(interval)
-            await self._beat()
+        while not self._stop_event.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            if not self._stop_event.is_set():
+                await self._beat()
 
     async def stop(self) -> None:
-        """Signal the heartbeat to stop."""
-        self._running = False
+        """Signal the heartbeat to stop (wakes immediately)."""
+        self._stop_event.set()
         logger.debug("Heartbeat service stopped")
 
     async def _beat(self) -> None:

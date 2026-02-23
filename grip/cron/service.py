@@ -4,7 +4,6 @@ Jobs are stored as JSON in workspace/cron/jobs.json. When a job fires,
 it calls EngineProtocol.run() with the job's prompt as the user message.
 
 Uses croniter for cron expression parsing (e.g. "*/5 * * * *" = every 5 min).
-Falls back to interval-based scheduling if croniter is not installed.
 """
 
 from __future__ import annotations
@@ -69,6 +68,7 @@ class CronService:
         self._jobs: dict[str, CronJob] = {}
         self._running = False
         self._check_interval = 30
+        self._pending_tasks: set[asyncio.Task] = set()
 
         self._load_jobs()
 
@@ -82,7 +82,7 @@ class CronService:
                 job = CronJob.from_dict(item)
                 self._jobs[job.id] = job
             logger.debug("Loaded {} cron jobs", len(self._jobs))
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.error("Failed to load cron jobs: {}", exc)
 
     def _save_jobs(self) -> None:
@@ -169,15 +169,24 @@ class CronService:
         """Check all enabled jobs and run any that are due."""
         now = datetime.now(UTC)
 
-        for job in self._jobs.values():
+        for job in list(self._jobs.values()):
             if not job.enabled:
                 continue
 
             if self._is_job_due(job, now):
-                asyncio.create_task(
+                task = asyncio.create_task(
                     self._execute_job(job),
                     name=f"cron-{job.id}",
                 )
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._pending_tasks.discard)
+
+    @staticmethod
+    def _ensure_aware(dt: datetime) -> datetime:
+        """Ensure a datetime is timezone-aware (default to UTC if naive)."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
 
     def _is_job_due(self, job: CronJob, now: datetime) -> bool:
         """Determine if a cron job should fire based on its schedule."""
@@ -185,18 +194,17 @@ class CronService:
             from croniter import croniter
 
             if job.last_run:
-                last = datetime.fromisoformat(job.last_run)
+                last = self._ensure_aware(datetime.fromisoformat(job.last_run))
             else:
-                last = datetime.fromisoformat(job.created_at)
+                last = self._ensure_aware(datetime.fromisoformat(job.created_at))
             cron = croniter(job.schedule, last)
-            next_run = cron.get_next(datetime)
+            next_run = self._ensure_aware(cron.get_next(datetime))
             return now >= next_run
         except ImportError:
-            # Without croniter, parse simple interval expressions like "*/5 * * * *"
             if job.last_run:
-                last = datetime.fromisoformat(job.last_run)
+                last = self._ensure_aware(datetime.fromisoformat(job.last_run))
             else:
-                last = datetime.fromisoformat(job.created_at)
+                last = self._ensure_aware(datetime.fromisoformat(job.created_at))
             interval = self._parse_simple_interval(job.schedule)
             return (now - last).total_seconds() >= interval
         except Exception as exc:

@@ -7,6 +7,7 @@ results, and builds a cited summary with numbered source references.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -90,22 +91,17 @@ def _rank_urls(search_results: list[dict[str, str]], max_sources: int) -> list[d
     return ranked
 
 
-async def _fetch_url_text(url: str) -> str:
-    """Fetch a URL and extract readable text content."""
+async def _fetch_url_text(url: str, client: httpx.AsyncClient) -> str:
+    """Fetch a URL and extract readable text content using a shared client."""
     try:
-        async with httpx.AsyncClient(
-            timeout=_FETCH_TIMEOUT,
-            follow_redirects=True,
-            headers={"User-Agent": _USER_AGENT},
-        ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            text = resp.text[:_MAX_FETCH_CHARS]
-            text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = re.sub(r"\s+", " ", text).strip()
-            return text[:10_000]
+        resp = await client.get(url)
+        resp.raise_for_status()
+        text = resp.text[:_MAX_FETCH_CHARS]
+        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:10_000]
     except Exception as exc:
         logger.debug("Failed to fetch {}: {}", url, exc)
         return ""
@@ -272,12 +268,16 @@ class WebResearchTool(Tool):
 
         ranked = _rank_urls(all_results, max_sources)
 
-        contents: list[str] = []
-        for source in ranked:
-            content = await _fetch_url_text(source["url"])
-            contents.append(content)
+        async with httpx.AsyncClient(
+            timeout=_FETCH_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": _USER_AGENT},
+        ) as fetch_client:
+            contents = await asyncio.gather(
+                *(_fetch_url_text(source["url"], fetch_client) for source in ranked)
+            )
 
-        return _build_cited_summary(topic, ranked, contents)
+        return _build_cited_summary(topic, ranked, list(contents))
 
 
 def create_research_tools() -> list[Tool]:

@@ -166,17 +166,68 @@ def generate_tools_md(
     skills: list[Skill],
     mcp_servers: dict[str, Any] | None = None,
 ) -> str:
-    """Generate the full TOOLS.md content from live registry, skills, and MCP config.
+    """Generate TOOLS.md from the live registry (used by the LiteLLM engine).
 
-    This is called at agent startup and written to the workspace. The resulting
-    file is injected into the system prompt so the LLM always has an accurate
-    manifest of available capabilities.
+    Called at agent startup and written to the workspace. The resulting file
+    is injected into the system prompt so the LLM has an accurate manifest
+    of available capabilities.
     """
     parts: list[str] = [
         "# grip — Available Tools & Skills\n",
         "> Auto-generated at startup. Lists all built-in tools, skills, and MCP integrations.\n",
         _TOOL_ROUTING_INSTRUCTIONS,
         _build_tools_section(registry),
+    ]
+
+    skills_section = _build_skills_section(skills)
+    if skills_section:
+        parts.append(skills_section)
+
+    mcp_section = _build_mcp_section(mcp_servers or {})
+    if mcp_section:
+        parts.append(mcp_section)
+
+    return "\n\n".join(parts) + "\n"
+
+
+_SDK_CUSTOM_TOOLS: list[tuple[str, str, str]] = [
+    ("send_message", "text, session_key", "Send a text message to the user via the configured channel."),
+    ("send_file", "file_path, caption, session_key", "Send a file to the user via the configured channel."),
+    ("remember", "fact, category", "Store a fact in long-term memory for future recall."),
+    ("recall", "query_text", "Search long-term memory for facts matching the query."),
+    ("stock_quote", "symbol", "Fetch the current stock price for a ticker symbol. (requires yfinance)"),
+]
+
+
+def _build_sdk_tools_section() -> str:
+    """Generate the custom tools table for Claude SDK engine mode."""
+    lines = [
+        "## Custom Tools\n",
+        "These tools are provided by grip on top of the Claude SDK's built-in tools",
+        "(Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, etc.):\n",
+        "| Tool | Parameters | Description |",
+        "|------|-----------|-------------|",
+    ]
+    for name, params, desc in _SDK_CUSTOM_TOOLS:
+        lines.append(f"| `{name}` | {params} | {desc} |")
+    return "\n".join(lines)
+
+
+def generate_sdk_tools_md(
+    skills: list[Skill],
+    mcp_servers: dict[str, Any] | None = None,
+) -> str:
+    """Generate TOOLS.md for the Claude SDK engine.
+
+    The SDK engine uses Claude's built-in tools plus grip's custom tools.
+    This generates a manifest reflecting those, instead of listing the full
+    default registry which only applies to the LiteLLM engine.
+    """
+    parts: list[str] = [
+        "# grip — Available Tools & Skills\n",
+        "> Auto-generated at startup. Lists custom tools, skills, and MCP integrations.\n",
+        _TOOL_ROUTING_INSTRUCTIONS,
+        _build_sdk_tools_section(),
     ]
 
     skills_section = _build_skills_section(skills)

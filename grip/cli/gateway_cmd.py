@@ -456,7 +456,7 @@ def _start_api_server(
         SecurityHeadersMiddleware,
     )
     from grip.api.rate_limit import SlidingWindowRateLimiter
-    from grip.api.routers import chat, health, management, sessions, tools
+    from grip.api.routers import chat, health, management, mcp, sessions, tools
     from grip.skills.loader import SkillsLoader
 
     api_config = config.gateway.api
@@ -509,6 +509,7 @@ def _start_api_server(
     app.include_router(sessions.router)
     app.include_router(tools.router)
     app.include_router(management.router)
+    app.include_router(mcp.router)
 
     uv_config = uvicorn.Config(
         app,

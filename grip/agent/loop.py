@@ -16,6 +16,7 @@ for long-term fact storage.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -142,8 +143,8 @@ class AgentLoop:
         workspace_path = defaults.workspace.expanduser().resolve()
 
         extra: dict[str, Any] = {}
-        if tools_cfg.web.brave.enabled and tools_cfg.web.brave.api_key:
-            extra["brave_api_key"] = tools_cfg.web.brave.api_key
+        if tools_cfg.web.brave.enabled and tools_cfg.web.brave.api_key.get_secret_value():
+            extra["brave_api_key"] = tools_cfg.web.brave.api_key.get_secret_value()
         if defaults.dry_run:
             extra["dry_run"] = True
         if self._trust_manager is not None and tools_cfg.trust_mode != "trust_all":
@@ -179,7 +180,7 @@ class AgentLoop:
             effective_model = model
         elif self._config.agents.model_tiers.enabled:
             tiers_cfg = self._config.agents.model_tiers
-            session_tool_count = len(session_messages or []) if session_messages else 0
+            session_tool_count = sum(len(m.tool_calls) for m in (session_messages or []) if m.tool_calls)
             complexity = classify_complexity(
                 user_message,
                 tool_calls_in_session=session_tool_count,
@@ -212,6 +213,9 @@ class AgentLoop:
         # Limit massive token injection by capping immediate message history.
         # Ensure we always keep an even number so User/Assistant pairs stay balanced
         immediate_window = min(defaults.memory_window, 10)
+
+        session: Session | None = None
+        session_summary: str | None = None
 
         if self._session_mgr:
             session = self._session_mgr.get_or_create(session_key)
@@ -315,9 +319,7 @@ class AgentLoop:
             # Execute all tool calls in parallel via asyncio.gather.
             # Results are collected in the same order as the original tool_calls
             # list so tool_call_id alignment is preserved for the LLM.
-            import asyncio as _aio
-
-            exec_results = await _aio.gather(
+            exec_results = await asyncio.gather(
                 *(self._execute_tool(tc, tool_ctx) for tc in response.tool_calls)
             )
 
@@ -590,17 +592,18 @@ class AgentLoop:
         """Execute a single tool call through the registry or legacy executor."""
         import time
 
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
         logger.info(
             "Executing tool: {}({})",
             tool_call.function_name,
-            ", ".join(f"{k}={v!r}" for k, v in list(tool_call.arguments.items())[:3]),
+            ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3]),
         )
 
         start = time.perf_counter()
 
         # Prefer ToolRegistry (Phase 3+)
         if self._registry:
-            output = await self._registry.execute(tool_call.function_name, tool_call.arguments, ctx)
+            output = await self._registry.execute(tool_call.function_name, args, ctx)
             elapsed = (time.perf_counter() - start) * 1000
             success = not output.startswith("Error:")
             return ToolExecutionResult(

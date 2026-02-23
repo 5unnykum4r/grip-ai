@@ -59,11 +59,20 @@ class MemoryManager:
         tmp.rename(self._memory_path)
 
     def append_to_memory(self, entry: str) -> None:
-        """Append a new fact or section to the end of MEMORY.md."""
-        current = self.read_memory()
-        if current and not current.endswith("\n"):
-            current += "\n"
-        self.write_memory(current + entry.rstrip() + "\n")
+        """Append a new fact or section to the end of MEMORY.md.
+
+        Uses file append mode instead of read+rewrite for O(1) I/O
+        regardless of file size. Adds a leading newline if the file
+        doesn't already end with one.
+        """
+        text = entry.rstrip() + "\n"
+        if self._memory_path.exists() and self._memory_path.stat().st_size > 0:
+            with self._memory_path.open("rb") as f:
+                f.seek(-1, 2)
+                if f.read(1) != b"\n":
+                    text = "\n" + text
+        with self._memory_path.open("a", encoding="utf-8") as f:
+            f.write(text)
 
     def read_history(self) -> str:
         """Read the full contents of HISTORY.md."""
@@ -97,19 +106,20 @@ class MemoryManager:
             return [line for line in lines if query_lower in line.lower()][:max_results]
 
         doc_freq: Counter[str] = Counter()
-        line_token_sets: list[set[str]] = []
+        line_token_lists: list[list[str]] = []
         for line in lines:
-            tokens = set(_tokenize(line))
-            line_token_sets.append(tokens)
-            for token in tokens:
+            tokens = _tokenize(line)
+            line_token_lists.append(tokens)
+            unique = set(tokens)
+            for token in unique:
                 doc_freq[token] += 1
 
         total_docs = len(lines)
         now = datetime.now(UTC)
 
         scored: list[tuple[float, str]] = []
-        for line in lines:
-            line_tokens = _tokenize(line)
+        for idx, line in enumerate(lines):
+            line_tokens = line_token_lists[idx]
             if not line_tokens:
                 continue
             tf_counts = Counter(line_tokens)
@@ -230,12 +240,13 @@ class MemoryManager:
 
         token_sets = [set(_tokenize(chunk)) for chunk in chunks]
         keep = [True] * len(chunks)
+        candidates = _jaccard_candidates(token_sets, similarity_threshold)
 
         for i in range(len(chunks)):
-            if not keep[i]:
+            if not keep[i] or i not in candidates:
                 continue
-            for j in range(i + 1, len(chunks)):
-                if not keep[j] or not token_sets[i] or not token_sets[j]:
+            for j in sorted(candidates[i]):
+                if not keep[j]:
                     continue
                 intersection = len(token_sets[i] & token_sets[j])
                 union = len(token_sets[i] | token_sets[j])
@@ -469,6 +480,40 @@ def _tokenize(text: str) -> list[str]:
     return [
         word for word in _WORD_RE.findall(text.lower()) if len(word) > 2 and word not in _STOPWORDS
     ]
+
+
+def _jaccard_candidates(
+    token_sets: list[set[str]], threshold: float
+) -> dict[int, set[int]]:
+    """Build candidate pairs for Jaccard comparison using an inverted index.
+
+    For Jaccard(A,B) >= threshold, |B| must be in [threshold*|A|, |A|/threshold].
+    Only pairs sharing at least one token are candidates. Returns a mapping of
+    entry index i -> set of candidate indices j (where j > i).
+    """
+    inverted: dict[str, list[int]] = {}
+    for idx, tokens in enumerate(token_sets):
+        for token in tokens:
+            inverted.setdefault(token, []).append(idx)
+
+    candidates: dict[int, set[int]] = {}
+    for i, tokens_i in enumerate(token_sets):
+        if not tokens_i:
+            continue
+        size_i = len(tokens_i)
+        lo = threshold * size_i
+        hi = size_i / threshold if threshold > 0 else float("inf")
+        cands_i: set[int] = set()
+        for token in tokens_i:
+            for j in inverted[token]:
+                if j <= i:
+                    continue
+                size_j = len(token_sets[j])
+                if lo <= size_j <= hi:
+                    cands_i.add(j)
+        if cands_i:
+            candidates[i] = cands_i
+    return candidates
 
 
 def build_memory_tools_description() -> dict[str, Any]:

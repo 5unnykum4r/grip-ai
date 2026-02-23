@@ -10,6 +10,7 @@ management — all too dangerous for remote HTTP access.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -48,9 +49,13 @@ async def get_status(
     ws_path = defaults.workspace.expanduser().resolve()
 
     sessions_dir = ws_path / "sessions"
-    session_count = 0
-    if sessions_dir.exists():
-        session_count = len(list(sessions_dir.glob("*.json")))
+
+    def _count_sessions() -> int:
+        if sessions_dir.exists():
+            return len(list(sessions_dir.glob("*.json")))
+        return 0
+
+    session_count = await asyncio.to_thread(_count_sessions)
 
     channels_status = {}
     for name in ("telegram", "discord", "slack"):
@@ -302,7 +307,7 @@ async def get_memory(
     """Read the contents of MEMORY.md."""
     check_token_rate_limit(request, token)
 
-    content = memory_mgr.read_memory()
+    content = await asyncio.to_thread(memory_mgr.read_memory)
     return {"content": content, "length": len(content)}
 
 
@@ -325,7 +330,7 @@ async def search_memory(
             detail="Query must be 1-500 characters",
         )
 
-    results = memory_mgr.search_history(q)
+    results = await asyncio.to_thread(memory_mgr.search_history, q)
     return {"query": q, "results": results, "count": len(results)}
 
 

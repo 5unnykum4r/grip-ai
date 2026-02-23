@@ -339,7 +339,19 @@ def _handle_test_failure() -> str:
 
 
 def onboard_command() -> None:
-    """Interactive setup wizard for grip."""
+    """Interactive setup wizard for grip.
+
+    Delegates to _run_onboard_wizard() in a loop so that "restart wizard"
+    re-runs without recursive calls (which would blow the stack after
+    enough retries).
+    """
+    while True:
+        if not _run_onboard_wizard():
+            return
+
+
+def _run_onboard_wizard() -> bool:
+    """Single pass of the onboard wizard. Returns True to restart, False when done."""
     console.clear()
     _print_header()
 
@@ -369,7 +381,7 @@ def onboard_command() -> None:
         console.print(
             "\n[dim]👋 Setup cancelled. Run [cyan]grip onboard[/cyan] anytime to set up.[/dim]"
         )
-        return
+        return False
     console.print("[dim]Great! Let's get you set up...[/dim]")
 
     _ask_linux_user()
@@ -743,7 +755,7 @@ def onboard_command() -> None:
             if action == "retry":
                 continue
             else:
-                return onboard_command()
+                return True
     elif api_key or (selected_spec and not selected_spec.api_key_env):
         while True:
             success = _auto_test_connection(config, full_model)
@@ -753,7 +765,7 @@ def onboard_command() -> None:
             if action == "retry":
                 continue
             else:
-                return onboard_command()
+                return True
 
     # ── Success panel ──────────────────────────────────────────────────
     engine_line = "[dim]Powered by Claude Agent SDK[/dim]\n\n" if use_sdk else ""
@@ -774,3 +786,4 @@ def onboard_command() -> None:
             expand=False,
         )
     )
+    return False

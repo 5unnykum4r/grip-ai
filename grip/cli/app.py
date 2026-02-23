@@ -24,7 +24,7 @@ _console = Console(stderr=True)
 
 def _check_root() -> None:
     """Warn and require confirmation when running as root."""
-    if os.geteuid() != 0:
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
         return
     _console.print(
         "\n[bold red]WARNING: grip is running as root.[/bold red]\n"

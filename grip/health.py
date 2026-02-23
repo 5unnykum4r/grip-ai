@@ -7,8 +7,10 @@ tools, and other external services are available.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -38,7 +40,7 @@ class HealthChecker:
     """Manages health checks for all external dependencies."""
 
     def __init__(self) -> None:
-        self._checks: dict[str, asyncio.Task[HealthCheckResult]] = {}
+        pass
 
     async def check_llm_provider(
         self,
@@ -46,7 +48,6 @@ class HealthChecker:
         timeout: float = 5.0,
     ) -> HealthCheckResult:
         """Check if an LLM provider is healthy."""
-        import time
 
         start = time.perf_counter()
         try:
@@ -74,7 +75,7 @@ class HealthChecker:
                     message="Provider has no health check method",
                     latency_ms=0.0,
                 )
-        except TimeoutError:
+        except (TimeoutError, httpx.TimeoutException):
             latency = (time.perf_counter() - start) * 1000
             return HealthCheckResult(
                 name="llm_provider",
@@ -97,7 +98,6 @@ class HealthChecker:
         timeout: float = 5.0,
     ) -> HealthCheckResult:
         """Check if an HTTP endpoint is healthy."""
-        import time
 
         start = time.perf_counter()
         try:
@@ -120,7 +120,7 @@ class HealthChecker:
                         latency_ms=latency,
                         details={"status_code": response.status_code},
                     )
-        except TimeoutError:
+        except (TimeoutError, httpx.TimeoutException):
             latency = (time.perf_counter() - start) * 1000
             return HealthCheckResult(
                 name=f"http:{url}",
@@ -143,7 +143,6 @@ class HealthChecker:
         command: list[str],
     ) -> HealthCheckResult:
         """Check if a tool executable is available."""
-        import time
 
         start = time.perf_counter()
         try:
@@ -154,7 +153,7 @@ class HealthChecker:
             )
             try:
                 await asyncio.wait_for(result.communicate(), timeout=5.0)
-            except TimeoutError:
+            except (TimeoutError, httpx.TimeoutException):
                 result.kill()
                 await result.wait()
 
@@ -193,10 +192,9 @@ class HealthChecker:
 
     async def check_workspace(
         self,
-        workspace_path: Any,
+        workspace_path: Path,
     ) -> HealthCheckResult:
         """Check if workspace is accessible."""
-        import time
 
         start = time.perf_counter()
         try:

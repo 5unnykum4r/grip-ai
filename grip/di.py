@@ -6,6 +6,7 @@ services in one place, making testing and configuration easier.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -55,11 +56,14 @@ class DIContainer:
 
 
 _global_container: DIContainer | None = None
+_container_lock = threading.Lock()
 
 
 def get_container() -> DIContainer:
-    """Get the global DI container."""
+    """Get the global DI container (thread-safe)."""
     global _global_container
     if _global_container is None:
-        _global_container = DIContainer()
+        with _container_lock:
+            if _global_container is None:
+                _global_container = DIContainer()
     return _global_container
