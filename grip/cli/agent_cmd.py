@@ -13,7 +13,7 @@ import json
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from loguru import logger
@@ -31,6 +31,9 @@ from grip.memory import MemoryManager
 from grip.providers.registry import PROVIDERS, ProviderRegistry
 from grip.session import SessionManager
 from grip.workspace import WorkspaceManager
+
+if TYPE_CHECKING:
+    from grip.trust import TrustManager
 
 console = Console()
 
@@ -192,7 +195,7 @@ def _get_mcp_manager(engine: EngineProtocol):
 
 def _build_engine(
     config: GripConfig,
-) -> tuple[EngineProtocol, SessionManager, MemoryManager, "TrustManager"]:
+) -> tuple[EngineProtocol, SessionManager, MemoryManager, TrustManager]:
     """Wire up the engine stack from config using the engine factory.
 
     TOOLS.md is generated from the actual engine's tools:

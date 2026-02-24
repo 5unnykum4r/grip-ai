@@ -383,12 +383,8 @@ class SDKRunner(EngineProtocol):
                         for block in getattr(message, "content", []):
                             if hasattr(block, "name"):
                                 tool_calls_made.append(block.name)
-                    elif isinstance(message, ResultMessage):
-                        # ResultMessage.result is the authoritative final
-                        # response.  AssistantMessage text blocks duplicate it,
-                        # so we only use ResultMessage to avoid printing twice.
-                        if getattr(message, "result", None):
-                            result_text = message.result
+                    elif isinstance(message, ResultMessage) and getattr(message, "result", None):
+                        result_text = message.result
         except ExceptionGroup as eg:
             # The SDK may raise CLIConnectionError wrapped in an ExceptionGroup
             # during query cleanup when the CLI subprocess exits before the

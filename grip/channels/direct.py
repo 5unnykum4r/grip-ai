@@ -65,8 +65,7 @@ class DirectSender:
         """Find the channel name whose allow_from list contains this chat_id."""
         for ch_name in ("telegram", "discord", "slack"):
             ch = getattr(self._config, ch_name, None)
-            if ch and ch.enabled and ch.token and ch.token.get_secret_value():
-                if str(chat_id) in [str(i) for i in ch.allow_from]:
+            if ch and ch.enabled and ch.token and ch.token.get_secret_value() and str(chat_id) in [str(i) for i in ch.allow_from]:
                     return ch_name
         return ""
 

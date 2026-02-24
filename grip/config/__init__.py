@@ -1,4 +1,10 @@
-from grip.config.loader import config_exists, get_config_path, get_workspace_path, load_config, save_config
+from grip.config.loader import (
+    config_exists,
+    get_config_path,
+    get_workspace_path,
+    load_config,
+    save_config,
+)
 from grip.config.schema import (
     AgentDefaults,
     AgentProfile,
