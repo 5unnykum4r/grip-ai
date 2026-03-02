@@ -16,13 +16,13 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/engine-Claude%20Agent%20SDK-blueviolet" alt="Claude Agent SDK">
-  <img src="https://img.shields.io/badge/tests-770-brightgreen" alt="770 Tests">
+  <img src="https://img.shields.io/badge/tests-769-brightgreen" alt="769 Tests">
   <img src="https://img.shields.io/badge/providers-15-orange" alt="15 LLM Providers">
 </p>
 
 ---
 
-grip is a self-hostable AI agent platform — 115 Python modules, ~21,200 lines, 770 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, track multi-step tasks, schedule cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
+grip is a self-hostable AI agent platform — 117 Python modules, ~21,800 lines, 769 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, track multi-step tasks, schedule cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
 
 ## Features
 
@@ -30,10 +30,10 @@ grip is a self-hostable AI agent platform — 115 Python modules, ~21,200 lines,
 |----------|---------|
 | **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM fallback for non-Claude models |
 | **LLM Providers** | Anthropic (via SDK), OpenRouter, OpenAI, DeepSeek, Groq, Google Gemini, Qwen, MiniMax, Moonshot (Kimi), Ollama (Cloud), Ollama (Local), vLLM, Llama.cpp, LM Studio, and any OpenAI-compatible API |
-| **Built-in Tools** | 26 tools across 16 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (yfinance), cron scheduling, workflows, MCP tools |
+| **Built-in Tools** | 30 tools across 15 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, document conversion (MarkItDown — PDF/DOCX/PPTX/XLSX/HTML/images), code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (stock quotes, history, company info via yfinance), cron scheduling, workflows, MCP tools |
 | **Task Tracking** | `todo_write`/`todo_read` tools with workspace persistence — active tasks injected into every system prompt so the agent never loses track across iterations |
-| **Chat Channels** | Telegram (bot commands, photos, documents, voice), Discord, Slack (Socket Mode) |
-| **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 27 endpoints |
+| **Chat Channels** | Telegram (bot commands, photos, documents with auto-conversion, voice), Discord (attachments with auto-conversion), Slack (Socket Mode, file shares with auto-conversion) |
+| **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 28 endpoints |
 | **Workflows** | DAG-based multi-agent orchestration with dependency resolution and parallel execution |
 | **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, mid-run compaction, semantic caching, and knowledge base |
 | **Scheduling** | Cron jobs with channel delivery, heartbeat service, natural language scheduling |
@@ -45,31 +45,33 @@ grip is a self-hostable AI agent platform — 115 Python modules, ~21,200 lines,
 
 ```
 grip gateway
-├── REST API (FastAPI :18800)          27 endpoints, bearer auth, rate limiting
+├── REST API (FastAPI :18800)          28 endpoints, bearer auth, rate limiting
 │   ├── /api/v1/chat                   blocking + SSE streaming
 │   ├── /api/v1/sessions               CRUD
 │   ├── /api/v1/tools                  list + execute
+│   ├── /api/v1/convert                document-to-markdown file upload
 │   ├── /api/v1/mcp                    server management + OAuth
 │   └── /api/v1/management             config, cron, skills, memory, metrics, workflows
 ├── Channels
-│   ├── Telegram                       bot commands, photos, docs, voice
-│   ├── Discord                        discord.py integration
-│   └── Slack                          Socket Mode (slack-sdk)
+│   ├── Telegram                       bot commands, photos, docs (auto-convert), voice
+│   ├── Discord                        discord.py + attachment auto-convert
+│   └── Slack                          Socket Mode + file share auto-convert
 ├── Message Bus                        asyncio.Queue decoupling channels ↔ engine
 ├── Engine (pluggable)
 │   ├── SDKRunner (claude_sdk)         Claude Agent SDK — full agentic loop
 │   └── LiteLLMRunner (litellm)        any model via LiteLLM + grip's AgentLoop
-├── Tool Registry                      26 tools across 16 modules
+├── Tool Registry                      30 tools across 17 modules
 │   ├── filesystem                     read/write/edit/append/list/delete/trash
 │   ├── shell                          exec with 50+ pattern deny-list
-│   ├── web                            web_search + web_fetch
-│   ├── research                       deep web_research
+│   ├── web                            web_search + web_fetch (HTML→markdown)
+│   ├── research                       deep web_research (HTML→markdown)
+│   ├── markitdown                     convert_document (PDF/DOCX/XLSX/images/…)
 │   ├── message                        send_message + send_file
 │   ├── spawn                          subagent spawn/check/list
 │   ├── todo                           todo_write + todo_read (task tracking)
 │   ├── workflow                       multi-agent DAG execution
 │   ├── scheduler                      cron scheduling
-│   ├── finance                        yfinance (optional)
+│   ├── finance                        stock_quote, stock_history, company_info (yfinance)
 │   └── mcp                            MCP tool proxy
 ├── MCP Manager                        stdio + HTTP/SSE servers, OAuth 2.0 + PKCE
 ├── Memory
@@ -130,7 +132,7 @@ uv sync
 uv sync --extra discord      # Discord bot
 uv sync --extra slack        # Slack bot (Socket Mode)
 uv sync --extra mcp          # Model Context Protocol
-uv sync --extra finance      # Financial tools (yfinance)
+uv sync --extra document     # Document conversion (MarkItDown — PDF/DOCX/XLSX/images)
 uv sync --extra viz          # Data visualization (plotext)
 uv sync --extra observe      # OpenTelemetry tracing
 uv sync --extra all          # Everything above
@@ -256,7 +258,7 @@ Open Telegram and message your bot. Available bot commands:
 | `/clear` | Clear conversation history |
 | `/compact` | Summarize and compress session |
 
-Send any text message to chat with the AI. The bot also handles photos (captions), documents, and voice messages.
+Send any text message to chat with the AI. The bot also handles photos (with OCR/description via MarkItDown), documents (auto-converted to markdown — PDF, DOCX, XLSX, etc.), and voice messages.
 
 ### Working with Telegram
 
@@ -541,6 +543,7 @@ All `/api/v1/*` endpoints require `Authorization: Bearer <token>`.
 | DELETE | `/api/v1/sessions/{key}` | Delete session |
 | GET | `/api/v1/tools` | List tool definitions |
 | POST | `/api/v1/tools/{name}/execute` | Execute tool directly (disabled by default) |
+| POST | `/api/v1/convert` | Convert uploaded document to markdown (MarkItDown) |
 | GET | `/api/v1/status` | System status |
 | GET | `/api/v1/config` | Masked config dump |
 | GET | `/api/v1/metrics` | Runtime metrics |
@@ -578,6 +581,11 @@ curl -H "Authorization: Bearer grip_YOUR_TOKEN" http://localhost:18800/api/v1/to
 
 # Metrics
 curl -H "Authorization: Bearer grip_YOUR_TOKEN" http://localhost:18800/api/v1/metrics
+
+# Convert a document to markdown
+curl -X POST http://localhost:18800/api/v1/convert \
+  -H "Authorization: Bearer grip_YOUR_TOKEN" \
+  -F "file=@document.pdf"
 ```
 
 ### Security
@@ -757,7 +765,7 @@ uv sync --group dev
 # Run linter
 uv run ruff check grip/ tests/
 
-# Run tests (770 tests across 50+ test files)
+# Run tests (769 tests across 50+ test files)
 uv run pytest
 
 # Run tests with coverage
@@ -774,13 +782,13 @@ uv build
 
 | Metric | Count |
 |--------|-------|
-| Python source files | 115 |
-| Lines of code | ~21,200 |
-| Tests | 770 |
-| Built-in tools | 26 (16 modules) |
+| Python source files | 117 |
+| Lines of code | ~21,800 |
+| Tests | 769 |
+| Built-in tools | 30 (15 modules) |
 | Built-in skills | 15 |
 | LLM providers | 15 |
-| API endpoints | 27 |
+| API endpoints | 28 |
 | CLI commands | 11 groups + 16 interactive slash commands |
 
 ## Contributing

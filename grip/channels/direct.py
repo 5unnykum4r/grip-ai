@@ -15,7 +15,7 @@ import httpx
 from loguru import logger
 
 from grip.channels.base import BaseChannel
-from grip.config.schema import ChannelsConfig
+from grip.config.schema import ChannelEntry, ChannelsConfig
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}"
 DISCORD_API = "https://discord.com/api/v10"
@@ -32,7 +32,7 @@ def _parse_session_key(session_key: str) -> tuple[str, str]:
     Returns ('', '') if the format is invalid (e.g. 'cli:interactive').
     """
     parts = session_key.split(":", 1)
-    if len(parts) == 2 and parts[0] in ("telegram", "discord", "slack"):
+    if len(parts) == 2 and parts[0] in ChannelsConfig.CHANNEL_NAMES:
         return parts[0], parts[1]
     return "", ""
 
@@ -54,37 +54,55 @@ class DirectSender:
         await self._client.aclose()
 
     def _get_token(self, channel: str) -> str:
-        """Get the bot token for a channel, or '' if not configured."""
+        """Get the bot token for a channel, or '' if not enabled/configured."""
         entry = getattr(self._config, channel, None)
-        if entry and entry.token:
-            value = entry.token.get_secret_value()
-            return value if value else ""
+        if entry and entry.is_active():
+            return entry.token.get_secret_value()
         return ""
 
-    def _resolve_bare_chat_id(self, chat_id: str) -> str:
-        """Find the channel name whose allow_from list contains this chat_id."""
-        for ch_name in ("telegram", "discord", "slack"):
-            ch = getattr(self._config, ch_name, None)
-            if ch and ch.enabled and ch.token and ch.token.get_secret_value() and str(chat_id) in [str(i) for i in ch.allow_from]:
-                    return ch_name
-        return ""
+    def _resolve_bare_chat_id(self, chat_id: str) -> tuple[str, str] | None:
+        """Find the channel whose allow_from list contains this chat_id.
+
+        Returns (channel_name, token) to avoid a redundant is_active() call
+        in _resolve_route, or None if no match found.
+        """
+        for ch_name in ChannelsConfig.CHANNEL_NAMES:
+            ch: ChannelEntry | None = getattr(self._config, ch_name, None)
+            if ch and ch.is_active() and str(chat_id) in ch.allow_from:
+                return ch_name, ch.token.get_secret_value()
+        return None
+
+    def _resolve_route(
+        self, session_key: str, context: str = "",
+    ) -> tuple[str, str, str] | None:
+        """Resolve session_key to (channel, chat_id, token), or None on failure."""
+        channel, chat_id = _parse_session_key(session_key)
+        token = ""
+        if not channel:
+            resolved = self._resolve_bare_chat_id(session_key)
+            if resolved:
+                channel, chat_id = resolved[0], session_key
+                token = resolved[1]
+            else:
+                ctx = f" ({context})" if context else ""
+                logger.warning("DirectSender: cannot route session_key '{}'{}", session_key, ctx)
+                return None
+
+        if not token:
+            token = self._get_token(channel)
+        if not token:
+            ctx = f" ({context})" if context else ""
+            logger.warning("DirectSender: no token configured for '{}'{}", channel, ctx)
+            return None
+
+        return channel, chat_id, token
 
     async def send_message(self, session_key: str, text: str) -> None:
         """Route a message to the correct channel API."""
-        channel, chat_id = _parse_session_key(session_key)
-        if not channel:
-            # Treat session_key as a bare chat_id and auto-resolve channel
-            resolved = self._resolve_bare_chat_id(session_key)
-            if resolved:
-                channel, chat_id = resolved, session_key
-            else:
-                logger.warning("DirectSender: cannot route session_key '{}'", session_key)
-                return
-
-        token = self._get_token(channel)
-        if not token:
-            logger.warning("DirectSender: no token configured for '{}'", channel)
+        route = self._resolve_route(session_key)
+        if not route:
             return
+        channel, chat_id, token = route
 
         if channel == "telegram":
             await self._send_telegram(token, chat_id, text)
@@ -95,19 +113,10 @@ class DirectSender:
 
     async def send_file(self, session_key: str, file_path: str, caption: str) -> None:
         """Route a file send to the correct channel API."""
-        channel, chat_id = _parse_session_key(session_key)
-        if not channel:
-            resolved = self._resolve_bare_chat_id(session_key)
-            if resolved:
-                channel, chat_id = resolved, session_key
-            else:
-                logger.warning("DirectSender: cannot route session_key '{}' for file", session_key)
-                return
-
-        token = self._get_token(channel)
-        if not token:
-            logger.warning("DirectSender: no token configured for '{}' (file)", channel)
+        route = self._resolve_route(session_key, "file")
+        if not route:
             return
+        channel, chat_id, token = route
 
         path = Path(file_path)
         if not path.is_file():
@@ -255,8 +264,8 @@ def wire_direct_sender(engine: Any, channels_config: ChannelsConfig) -> DirectSe
     (caller should close it on shutdown) or None if no channels are enabled.
     """
     has_any_token = any(
-        getattr(channels_config, ch).token.get_secret_value()
-        for ch in ("telegram", "discord", "slack")
+        getattr(channels_config, ch).is_active()
+        for ch in ChannelsConfig.CHANNEL_NAMES
     )
     if not has_any_token:
         return None

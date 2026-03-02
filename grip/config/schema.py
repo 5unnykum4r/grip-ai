@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import platform as _platform
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -192,13 +192,27 @@ class ChannelEntry(BaseModel):
     def _serialize_token(v: SecretStr) -> str:
         return v.get_secret_value()
 
+    def is_active(self) -> bool:
+        """Return True when the channel is enabled and has a non-empty token."""
+        return self.enabled and bool(self.token.get_secret_value())
+
 
 class ChannelsConfig(BaseModel):
     """Top-level container for all chat channel configurations."""
 
+    CHANNEL_NAMES: ClassVar[tuple[str, ...]] = ("telegram", "discord", "slack")
+
     telegram: ChannelEntry = Field(default_factory=ChannelEntry)
     discord: ChannelEntry = Field(default_factory=ChannelEntry)
     slack: ChannelEntry = Field(default_factory=ChannelEntry)
+
+
+# Fail fast at import time if CHANNEL_NAMES drifts from actual model fields.
+if set(ChannelsConfig.CHANNEL_NAMES) != set(ChannelsConfig.model_fields):
+    raise ValueError(
+        f"ChannelsConfig.CHANNEL_NAMES {ChannelsConfig.CHANNEL_NAMES} out of sync "
+        f"with model fields {tuple(ChannelsConfig.model_fields)}"
+    )
 
 
 class WebSearchProvider(BaseModel):

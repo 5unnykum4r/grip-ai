@@ -24,7 +24,7 @@ from grip.api.dependencies import (
     get_config,
     get_memory_mgr,
 )
-from grip.config.schema import GripConfig
+from grip.config.schema import ChannelsConfig, GripConfig
 from grip.memory.manager import MemoryManager
 
 router = APIRouter(prefix="/api/v1", tags=["management"])
@@ -58,9 +58,14 @@ async def get_status(
     session_count = await asyncio.to_thread(_count_sessions)
 
     channels_status = {}
-    for name in ("telegram", "discord", "slack"):
+    for name in ChannelsConfig.CHANNEL_NAMES:
         ch = getattr(config.channels, name, None)
-        channels_status[name] = ch.enabled if ch else False
+        if ch and ch.is_active():
+            channels_status[name] = "active"
+        elif ch and ch.enabled:
+            channels_status[name] = "no_token"
+        else:
+            channels_status[name] = "disabled"
 
     return {
         "model": defaults.model,

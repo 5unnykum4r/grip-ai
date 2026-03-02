@@ -759,8 +759,15 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
                     try:
                         result = await engine.run(user_input, session_key=session_key, model=model)
                     except Exception as exc:
-                        console.print(f"[red]Error: {exc}[/red]")
-                        logger.exception("Agent run failed")
+                        from grip.providers.exceptions import ProviderError
+
+                        if isinstance(exc, ProviderError):
+                            console.print(f"[red]{exc}[/red]")
+                            if exc.hint:
+                                console.print(f"[yellow]Hint: {exc.hint}[/yellow]")
+                        else:
+                            console.print(f"[red]Error: {exc}[/red]")
+                            logger.exception("Agent run failed")
                         continue
 
                 console.print()

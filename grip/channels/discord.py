@@ -102,11 +102,48 @@ class DiscordChannel(BaseChannel):
                     await bus.push_inbound(cmd_msg)
                     return
 
+            content = message.content
+
+            # Auto-convert file attachments to markdown
+            if message.attachments:
+                import tempfile
+                from pathlib import Path
+
+                for attachment in message.attachments:
+                    ext = Path(attachment.filename).suffix.lower()
+                    tmp_path = None
+                    try:
+                        from grip.tools.markitdown import (
+                            SUPPORTED_EXTENSIONS,
+                            convert_file_to_markdown,
+                        )
+
+                        if ext in SUPPORTED_EXTENSIONS:
+                            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                                tmp_path = Path(tmp.name)
+                            file_bytes = await attachment.read()
+                            tmp_path.write_bytes(file_bytes)
+                            result = await asyncio.to_thread(
+                                convert_file_to_markdown, tmp_path, max_chars=50_000
+                            )
+                            content += f"\n\n[Document: {attachment.filename}]\n\n{result.text_content}"
+                            logger.debug("Discord: converted attachment {} ({} chars)", attachment.filename, result.original_size)
+                        else:
+                            content += f"\n\n[User sent file: {attachment.filename}]"
+                    except ImportError:
+                        content += f"\n\n[User sent file: {attachment.filename}]"
+                    except Exception as exc:
+                        logger.debug("Discord attachment conversion failed for {}: {}", attachment.filename, exc)
+                        content += f"\n\n[User sent file: {attachment.filename}]"
+                    finally:
+                        if tmp_path is not None:
+                            tmp_path.unlink(missing_ok=True)
+
             msg = InboundMessage(
                 channel="discord",
                 chat_id=str(message.channel.id),
                 user_id=user_id,
-                text=message.content,
+                text=content,
                 metadata={
                     "message_id": str(message.id),
                     "guild_id": str(message.guild.id) if message.guild else "",

@@ -14,10 +14,11 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from grip import __version__
 from grip.tools.base import Tool, ToolContext
 
 _FETCH_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=5.0, pool=5.0)
-_USER_AGENT = "grip/0.2 (AI Research Agent; +https://github.com/grip)"
+_USER_AGENT = f"grip/{__version__} (AI Research Agent; +https://github.com/5unnykum4r/grip-ai)"
 _MAX_FETCH_CHARS = 30_000
 
 
@@ -92,16 +93,18 @@ def _rank_urls(search_results: list[dict[str, str]], max_sources: int) -> list[d
 
 
 async def _fetch_url_text(url: str, client: httpx.AsyncClient) -> str:
-    """Fetch a URL and extract readable text content using a shared client."""
+    """Fetch a URL and convert to markdown for better structure.
+
+    Uses convert_html_to_markdown which falls back to plain-text
+    extraction if markitdown is not installed.
+    """
     try:
         resp = await client.get(url)
         resp.raise_for_status()
-        text = resp.text[:_MAX_FETCH_CHARS]
-        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:10_000]
+        from grip.tools.markitdown import convert_html_to_markdown
+
+        html_content = resp.text[:_MAX_FETCH_CHARS]
+        return convert_html_to_markdown(html_content, max_chars=10_000)
     except Exception as exc:
         logger.debug("Failed to fetch {}: {}", url, exc)
         return ""

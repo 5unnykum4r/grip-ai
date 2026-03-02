@@ -86,6 +86,7 @@ class LiteLLMProvider(LLMProvider):
 
         if not LiteLLMProvider._litellm_configured:
             litellm.drop_params = True
+            litellm.suppress_debug_info = True
             LiteLLMProvider._litellm_configured = True
 
         resolved_model = model or self._default_model
@@ -103,17 +104,25 @@ class LiteLLMProvider(LLMProvider):
             kwargs["max_tokens"] = max_tokens
         if tools:
             kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
 
         if self._api_base:
             kwargs["api_base"] = self._api_base
         if self._api_key:
             kwargs["api_key"] = self._api_key
 
-        logger.debug(
+        if self._provider_name == "openrouter":
+            kwargs["extra_headers"] = {
+                "X-Title": "Grip AI",
+                "HTTP-Referer": "https://github.com/5unnykum4r/grip-ai",
+            }
+
+        tool_count = len(tools) if tools else 0
+        logger.info(
             "LiteLLM call: model={}, messages={}, tools={}",
             resolved_model,
             len(messages),
-            len(tools) if tools else 0,
+            tool_count,
         )
 
         try:

@@ -297,20 +297,51 @@ class TelegramChannel(BaseChannel):
             )
             await bus.push_inbound(msg)
 
-        # ── Photo messages (process caption) ──
+        # ── Photo messages (download + convert via MarkItDown if available) ──
         async def on_photo(update: Update, _ctx) -> None:
             if not update.message:
                 return
             ids = _check_user(update)
             if ids is None:
                 return
-            caption = update.message.caption or "[User sent a photo without caption]"
+            caption = update.message.caption or ""
+
+            text = caption or "[User sent a photo without caption]"
+
+            # Attempt to download and convert the photo via MarkItDown
+            if update.message.photo:
+                import asyncio
+                import tempfile
+                from pathlib import Path
+
+                try:
+                    from grip.tools.markitdown import convert_file_to_markdown
+
+                    photo_file = await update.message.photo[-1].get_file()
+                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                        tmp_path = Path(tmp.name)
+                    await photo_file.download_to_drive(str(tmp_path))
+                    try:
+                        result = await asyncio.to_thread(
+                            convert_file_to_markdown, tmp_path, max_chars=50_000
+                        )
+                        extracted = result.text_content.strip()
+                        if extracted:
+                            text = f"[Photo]\n\n{extracted}"
+                            if caption:
+                                text += f"\n\nCaption: {caption}"
+                    except ImportError:
+                        pass
+                    finally:
+                        tmp_path.unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.debug("Telegram photo conversion failed: {}", exc)
 
             msg = InboundMessage(
                 channel="telegram",
                 chat_id=ids[0],
                 user_id=ids[1],
-                text=caption,
+                text=text,
                 metadata={
                     "message_id": str(update.message.message_id),
                     "type": "photo",
@@ -318,7 +349,7 @@ class TelegramChannel(BaseChannel):
             )
             await bus.push_inbound(msg)
 
-        # ── Document messages (process caption) ──
+        # ── Document messages (download + auto-convert via MarkItDown) ──
         async def on_document(update: Update, _ctx) -> None:
             if not update.message:
                 return
@@ -331,6 +362,37 @@ class TelegramChannel(BaseChannel):
             text = f"[User sent document: {doc_name}]"
             if caption:
                 text += f"\n{caption}"
+
+            # Auto-convert supported documents to markdown
+            if doc:
+                import asyncio
+                import tempfile
+                from pathlib import Path
+
+                ext = Path(doc_name).suffix.lower() if doc_name else ""
+                tmp_path = None
+                try:
+                    from grip.tools.markitdown import SUPPORTED_EXTENSIONS, convert_file_to_markdown
+
+                    if ext in SUPPORTED_EXTENSIONS:
+                        tg_file = await doc.get_file()
+                        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                            tmp_path = Path(tmp.name)
+                        await tg_file.download_to_drive(str(tmp_path))
+                        result = await asyncio.to_thread(
+                            convert_file_to_markdown, tmp_path, max_chars=50_000
+                        )
+                        text = f"[Document: {doc_name}]\n\n{result.text_content}"
+                        if caption:
+                            text += f"\n\nCaption: {caption}"
+                        logger.debug("Telegram: converted document {} ({} chars)", doc_name, result.original_size)
+                except ImportError:
+                    logger.debug("markitdown not installed, skipping document conversion")
+                except Exception as exc:
+                    logger.debug("Telegram document conversion failed for {}: {}", doc_name, exc)
+                finally:
+                    if tmp_path is not None:
+                        tmp_path.unlink(missing_ok=True)
 
             msg = InboundMessage(
                 channel="telegram",

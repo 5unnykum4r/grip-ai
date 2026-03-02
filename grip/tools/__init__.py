@@ -9,6 +9,7 @@ from grip.tools.document_gen import create_document_gen_tools
 from grip.tools.email_compose import create_email_compose_tools
 from grip.tools.filesystem import create_filesystem_tools
 from grip.tools.finance import create_finance_tools
+from grip.tools.markitdown import create_markitdown_tools
 from grip.tools.mcp import MCPManager
 from grip.tools.message import create_message_tools
 from grip.tools.research import create_research_tools
@@ -30,6 +31,7 @@ __all__ = [
     "create_email_compose_tools",
     "create_filesystem_tools",
     "create_finance_tools",
+    "create_markitdown_tools",
     "create_message_tools",
     "create_research_tools",
     "create_scheduler_tools",
@@ -56,6 +58,7 @@ def create_default_registry(
     registry.register_many(create_message_tools(message_callback))
     registry.register_many(create_spawn_tools(subagent_manager))
     registry.register_many(create_finance_tools())
+    registry.register_many(create_markitdown_tools())
     registry.register_many(create_research_tools())
     registry.register_many(create_code_analysis_tools())
     registry.register_many(create_data_transform_tools())

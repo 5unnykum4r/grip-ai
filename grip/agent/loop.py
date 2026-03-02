@@ -131,7 +131,9 @@ class AgentLoop:
         self._config = config
         self._provider = provider
         self._workspace = workspace
-        self._context_builder = ContextBuilder(workspace, channels=config.channels)
+        self._context_builder = ContextBuilder(
+            workspace, channels=config.channels, tool_registry=tool_registry
+        )
         self._registry = tool_registry
         self._session_mgr = session_manager
         self._memory_mgr = memory_manager

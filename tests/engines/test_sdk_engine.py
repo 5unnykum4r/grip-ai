@@ -866,8 +866,6 @@ class TestSDKRunnerSkillsInPrompt:
     def test_includes_skills_section(
         self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
-        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
-
         mock_skill = MagicMock()
         mock_skill.name = "web_search"
         mock_skill.description = "Search the web for information"
@@ -877,6 +875,7 @@ class TestSDKRunnerSkillsInPrompt:
             loader_instance.scan.return_value = [mock_skill]
             mock_loader.return_value = loader_instance
 
+            runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
             prompt = runner._build_system_prompt("hello", "test:session")
 
         assert "web_search" in prompt

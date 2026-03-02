@@ -85,6 +85,13 @@ class SDKRunner(EngineProtocol):
         self._send_callback: Callable | None = None
         self._send_file_callback: Callable | None = None
 
+        # Pre-build static artifacts once (MCP config and custom tools don't
+        # change after construction).
+        self._custom_tools: list = self._build_custom_tools()
+        self._mcp_config: list[dict[str, Any]] = self._build_mcp_config()
+        self._allowed_tools_base: list[str] = self._collect_allowed_tools()
+        self._skills_cache: list = self._load_skills()
+
     # -- Callback wiring (called by gateway to route messages to channels) --
 
     def set_send_callback(self, callback: Callable) -> None:
@@ -138,6 +145,15 @@ class SDKRunner(EngineProtocol):
             tools.extend(srv.allowed_tools)
         return tools
 
+    def _load_skills(self) -> list:
+        """Load and cache available skills from the workspace."""
+        try:
+            loader = SkillsLoader(self._workspace.root)
+            return loader.scan()
+        except Exception as exc:
+            logger.debug("Failed to load skills for system prompt: {}", exc)
+            return []
+
     # -- System prompt assembly --
 
     def _build_system_prompt(
@@ -187,15 +203,10 @@ class SDKRunner(EngineProtocol):
                     + "\n".join(tool_lines)
                 )
 
-        # Load available skills and list their names + descriptions
-        try:
-            loader = SkillsLoader(self._workspace.root)
-            skills = loader.scan()
-            if skills:
-                skill_lines = [f"- **{s.name}**: {s.description}" for s in skills]
-                parts.append("## Available Skills\n\n" + "\n".join(skill_lines))
-        except Exception as exc:
-            logger.debug("Failed to load skills for system prompt: {}", exc)
+        # List cached skills
+        if self._skills_cache:
+            skill_lines = [f"- **{s.name}**: {s.description}" for s in self._skills_cache]
+            parts.append("## Available Skills\n\n" + "\n".join(skill_lines))
 
         # Runtime metadata
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -228,6 +239,10 @@ class SDKRunner(EngineProtocol):
 
         Each tool uses the claude_agent_sdk @tool(name, description, input_schema)
         decorator and receives a single ``args`` dict parameter.
+
+        Note: ``runner = self`` captures this SDKRunner instance at build time.
+        All tool closures are bound to this specific instance, so callbacks
+        (e.g. _send_callback) reflect mutations made after construction.
         """
         tools: list = []
 
@@ -247,7 +262,7 @@ class SDKRunner(EngineProtocol):
                 result = await cb(args["session_key"], args["text"])
             else:
                 result = await asyncio.to_thread(cb, args["session_key"], args["text"])
-            return runner._text_result(str(result))
+            return runner._text_result(str(result) if result is not None else "Message sent.")
 
         @tool(
             "send_file",
@@ -262,7 +277,7 @@ class SDKRunner(EngineProtocol):
                 result = await cb(args["session_key"], args["file_path"], args["caption"])
             else:
                 result = await asyncio.to_thread(cb, args["session_key"], args["file_path"], args["caption"])
-            return runner._text_result(str(result))
+            return runner._text_result(str(result) if result is not None else "File sent.")
 
         @tool(
             "remember",
@@ -327,10 +342,10 @@ class SDKRunner(EngineProtocol):
         Uses ClaudeSDKClient to run the agent loop, collecting the final result
         and tool call names. Persists the exchange to history via MemoryManager.
         """
-        custom_tools = self._build_custom_tools()
+        custom_tools = self._custom_tools
         system_prompt = self._build_system_prompt(user_message, session_key, custom_tools)
-        mcp_config = self._build_mcp_config()
-        allowed_tools = self._collect_allowed_tools()
+        mcp_config = self._mcp_config
+        allowed_tools = list(self._allowed_tools_base)
 
         effective_model = model or self._model
 
@@ -383,6 +398,9 @@ class SDKRunner(EngineProtocol):
                         for block in getattr(message, "content", []):
                             if hasattr(block, "name"):
                                 tool_calls_made.append(block.name)
+                    # ResultMessage is the authoritative final response;
+                    # AssistantMessage text blocks duplicate it, so text
+                    # is only captured here to avoid printing twice.
                     elif isinstance(message, ResultMessage) and getattr(message, "result", None):
                         result_text = message.result
         except ExceptionGroup as eg:

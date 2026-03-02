@@ -13,11 +13,12 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from grip import __version__
 from grip.tools.base import Tool, ToolContext
 
 _FETCH_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=5.0, pool=5.0)
 _FETCH_MAX_CHARS = 50_000
-_USER_AGENT = "grip/0.1 (AI Agent; +https://github.com/grip)"
+_USER_AGENT = f"grip/{__version__} (AI Agent; +https://github.com/5unnykum4r/grip-ai)"
 
 
 class _TextExtractor(HTMLParser):
@@ -228,7 +229,9 @@ class WebFetchTool(Tool):
 
             content_type = resp.headers.get("content-type", "")
             if "text/html" in content_type or "application/xhtml" in content_type:
-                text = _extract_text(resp.text)
+                from grip.tools.markitdown import convert_html_to_markdown
+
+                text = convert_html_to_markdown(resp.text, max_chars=_FETCH_MAX_CHARS)
             elif "text/" in content_type or "json" in content_type or "xml" in content_type:
                 text = resp.text
             else:

@@ -1,12 +1,12 @@
 """Context builder: assembles the system prompt from workspace files.
 
 Reads identity files (AGENT.md, IDENTITY.md, SOUL.md, USER.md, SHIELD.md),
-appends a compact skill listing, active todos, and metadata, and returns a
-single system message ready for the LLM.
+appends a compact tool overview, skill listing, active todos, and metadata,
+and returns a single system message ready for the LLM.
 
-Tool definitions are already sent via the API's ``tools`` parameter, so
-the system prompt only carries identity, skills overview, shield policy,
-active task list, tone hints, and runtime metadata — keeping token usage minimal.
+Full tool JSON schemas are sent via the API's ``tools`` parameter. The system
+prompt includes a compact tools overview (name + category) so the LLM knows
+which tools exist and is instructed to prefer them over writing manual code.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from loguru import logger
 from grip import __version__
 from grip.config.schema import ChannelsConfig
 from grip.providers.types import LLMMessage
+from grip.tools.base import ToolRegistry
 from grip.workspace.manager import WorkspaceManager
 
 # Patterns used by _detect_tone_hint() to classify the user's emotional state.
@@ -90,20 +91,26 @@ class ContextBuilder:
     The system prompt follows this structure:
       1. Agent identity (AGENT.md + IDENTITY.md + SOUL.md + USER.md)
       2. Shield policy (SHIELD.md — runtime threat feed evaluation rules)
-      3. Compact skill listing (name + one-line description only)
-      4. Active task list (from workspace/tasks.json, pending/in_progress only)
-      5. Tone adaptation (based on user message sentiment)
-      6. Runtime metadata (datetime, platform, version)
+      3. Compact tools overview (category + tool names so the LLM knows what's available)
+      4. Compact skill listing (name + one-line description only)
+      5. Active task list (from workspace/tasks.json, pending/in_progress only)
+      6. Tone adaptation (based on user message sentiment)
+      7. Runtime metadata (datetime, platform, version)
 
-    Tool definitions are NOT included here — they travel via the API's
-    ``tools`` parameter and are therefore excluded to save tokens.
+    Full tool JSON schemas travel via the API's ``tools`` parameter. The
+    system prompt carries only a compact overview so the LLM prefers
+    registered tools over writing manual code.
     """
 
     def __init__(
-        self, workspace: WorkspaceManager, channels: ChannelsConfig | None = None
+        self,
+        workspace: WorkspaceManager,
+        channels: ChannelsConfig | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._workspace = workspace
         self._channels = channels
+        self._registry = tool_registry
         self._cached_identity: str | None = None
 
     def invalidate_cache(self) -> None:
@@ -122,6 +129,10 @@ class ContextBuilder:
         identity = self._build_identity_section()
         if identity:
             parts.append(identity)
+
+        tools_overview = self._build_tools_overview()
+        if tools_overview:
+            parts.append(tools_overview)
 
         skills_listing = self._build_skills_listing()
         if skills_listing:
@@ -160,6 +171,41 @@ class ContextBuilder:
 
         self._cached_identity = "\n\n".join(sections)
         return self._cached_identity
+
+    def _build_tools_overview(self) -> str:
+        """Build a compact category-grouped listing of registered tools.
+
+        Gives the LLM awareness of available tools so it prefers calling them
+        over writing scripts or shell commands for the same task. Full JSON
+        schemas are still sent via the API's ``tools`` parameter.
+        """
+        if not self._registry:
+            return ""
+
+        by_category = self._registry.get_tools_by_category()
+        if not by_category:
+            return ""
+
+        lines = [
+            "## Available Tools\n",
+            "You have specialized tools registered below. ALWAYS call the "
+            "appropriate tool instead of writing code or shell commands to "
+            "accomplish the same task.\n",
+        ]
+
+        for category in sorted(by_category):
+            tools = by_category[category]
+            entries = ", ".join(f"**{t.name}**" for t in tools)
+            lines.append(f"- {category}: {entries}")
+
+        lines.append(
+            "\nWhen a user's request matches a tool's purpose, call it directly. "
+            "For example, use **stock_quote** for stock prices, **web_search** "
+            "for web queries, **web_fetch** to read a URL — never write a script "
+            "or install a package for something a tool already handles."
+        )
+
+        return "\n".join(lines)
 
     def _build_skills_listing(self) -> str:
         """Build a compact name+description listing of available skills.
@@ -235,10 +281,10 @@ class ContextBuilder:
 
         if channels:
             connected: list[str] = []
-            for ch_name in ("telegram", "discord", "slack"):
+            for ch_name in ChannelsConfig.CHANNEL_NAMES:
                 ch = getattr(channels, ch_name, None)
-                if ch and ch.enabled and ch.token and ch.token.get_secret_value():
-                    ids = ", ".join(str(i) for i in ch.allow_from) if ch.allow_from else "unknown"
+                if ch and ch.is_active():
+                    ids = ", ".join(ch.allow_from) if ch.allow_from else "unknown"
                     connected.append(f"{ch_name} (chat_id: {ids})")
             if connected:
                 lines.append(

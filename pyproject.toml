@@ -1,6 +1,6 @@
 [project]
 name = "grip-ai"
-version = "1.0.0"
+version = "1.2.0"
 description = "Claude Agent SDK powered AI agent platform with multi-model fallback, tool execution, and multi-channel chat integration."
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,8 @@ dependencies = [
     "sse-starlette>=2.0",
     "litellm>=1.0",
     "json-repair>=0.30",
+    "python-multipart>=0.0.9",
+    "yfinance>=0.2",
 ]
 
 [project.urls]
@@ -56,14 +58,14 @@ Documentation = "https://github.com/5unnykum4r/grip-ai#readme"
 discord = ["discord.py>=2.0"]
 slack = ["slack-sdk>=3.26"]
 mcp = ["mcp>=1.0"]
-finance = ["yfinance>=0.2"]
+document = ["markitdown[all]>=0.1"]
 viz = ["plotext>=5.3"]
 observe = ["opentelemetry-api", "opentelemetry-sdk"]
 all = [
     "discord.py>=2.0",
     "slack-sdk>=3.26",
     "mcp>=1.0",
-    "yfinance>=0.2",
+    "markitdown[all]>=0.1",
     "plotext>=5.3",
     "opentelemetry-api",
     "opentelemetry-sdk",

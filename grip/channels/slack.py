@@ -114,6 +114,52 @@ class SlackChannel(BaseChannel):
                             await client.send_socket_mode_response({"envelope_id": req.envelope_id})
                             return
 
+                    # Auto-convert file shares to markdown
+                    files = event.get("files", [])
+                    if files:
+                        import tempfile
+                        from pathlib import Path
+
+                        import httpx
+
+                        for file_info in files:
+                            fname = file_info.get("name", "unknown")
+                            download_url = file_info.get("url_private_download", "")
+                            ext = Path(fname).suffix.lower()
+                            tmp_path = None
+                            try:
+                                from grip.tools.markitdown import (
+                                    SUPPORTED_EXTENSIONS,
+                                    convert_file_to_markdown,
+                                )
+
+                                if ext in SUPPORTED_EXTENSIONS and download_url:
+                                    async with httpx.AsyncClient(timeout=30.0) as dl_client:
+                                        resp = await dl_client.get(
+                                            download_url,
+                                            headers={"Authorization": f"Bearer {bot_token}"},
+                                        )
+                                        resp.raise_for_status()
+                                        file_bytes = resp.content
+                                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                                        tmp_path = Path(tmp.name)
+                                    tmp_path.write_bytes(file_bytes)
+                                    result = await asyncio.to_thread(
+                                        convert_file_to_markdown, tmp_path, max_chars=50_000
+                                    )
+                                    text += f"\n\n[Document: {fname}]\n\n{result.text_content}"
+                                    logger.debug("Slack: converted file {} ({} chars)", fname, result.original_size)
+                                else:
+                                    text += f"\n\n[User sent file: {fname}]"
+                            except ImportError:
+                                text += f"\n\n[User sent file: {fname}]"
+                            except Exception as exc:
+                                logger.debug("Slack file conversion failed for {}: {}", fname, exc)
+                                text += f"\n\n[User sent file: {fname}]"
+                            finally:
+                                if tmp_path is not None:
+                                    tmp_path.unlink(missing_ok=True)
+
                     msg = InboundMessage(
                         channel="slack",
                         chat_id=chat_id,

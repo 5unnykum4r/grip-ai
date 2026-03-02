@@ -54,14 +54,9 @@ class ChannelManager:
         """Start all enabled channels. Returns list of channel names started."""
         started: list[str] = []
 
-        channel_entries = {
-            "telegram": self._config.telegram,
-            "discord": self._config.discord,
-            "slack": self._config.slack,
-        }
-
-        for name, entry in channel_entries.items():
-            if not entry.enabled:
+        for name in ChannelsConfig.CHANNEL_NAMES:
+            entry = getattr(self._config, name, None)
+            if not entry or not entry.is_active():
                 continue
 
             channel = _create_channel(name, entry)

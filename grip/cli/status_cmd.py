@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from grip.config import load_config
+from grip.config.schema import ChannelsConfig
 from grip.providers.registry import ProviderRegistry
 from grip.session import SessionManager
 from grip.workspace import WorkspaceManager
@@ -76,10 +77,12 @@ def status_command() -> None:
 
     # Channels status
     channels_info: list[str] = []
-    for name in ("telegram", "discord", "slack"):
+    for name in ChannelsConfig.CHANNEL_NAMES:
         ch = getattr(config.channels, name, None)
-        if ch and ch.enabled:
-            channels_info.append(f"{name} [green](enabled)[/green]")
+        if ch and ch.is_active():
+            channels_info.append(f"{name} [green](active)[/green]")
+        elif ch and ch.enabled:
+            channels_info.append(f"{name} [yellow](no token)[/yellow]")
         else:
             channels_info.append(f"{name} [dim](disabled)[/dim]")
 

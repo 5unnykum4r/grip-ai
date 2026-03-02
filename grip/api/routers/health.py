@@ -10,6 +10,7 @@ import time
 
 from fastapi import APIRouter, Depends, Request
 
+from grip import __version__
 from grip.api.auth import require_auth
 from grip.api.dependencies import check_rate_limit
 
@@ -33,6 +34,6 @@ async def health_detail(request: Request) -> dict:
     uptime_seconds = time.time() - start_time
     return {
         "status": "ok",
-        "version": "0.1.1",
+        "version": __version__,
         "uptime_seconds": round(uptime_seconds, 1),
     }
