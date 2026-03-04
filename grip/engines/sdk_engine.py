@@ -361,7 +361,10 @@ class SDKRunner(EngineProtocol):
         # Ensure the custom tool names are in allowed_tools so the SDK permits
         # them.  SDK MCP tools follow the mcp__<server_key>__<tool> convention.
         custom_tool_names = [f"mcp__grip_tools__{t.name}" for t in custom_tools]
-        allowed_tools.extend(custom_tool_names)
+        # Note: do NOT add custom_tool_names to allowed_tools.
+        # Adding them would make allowed_tools non-empty, causing the Claude CLI
+        # to restrict to ONLY those MCP tools and block all built-in tools
+        # (WebSearch, Bash, WebFetch, etc.). Passing None allows everything.
 
         env_opts: dict[str, str] = {
             # Prevent the Claude CLI from refusing to start when grip is
