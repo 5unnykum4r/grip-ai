@@ -131,6 +131,11 @@ class AgentDefaults(BaseModel):
         default="acceptEdits",
         description="SDK permission mode: 'acceptEdits', 'bypassPermissions', or 'default'.",
     )
+    sdk_effort: str | None = Field(
+        default=None,
+        description="Adaptive thinking effort level: 'low', 'medium', 'high', or 'max' (opus only). "
+        "Enables adaptive thinking via the --effort CLI flag. None = disabled.",
+    )
 
 
 class ModelTiersConfig(BaseModel):

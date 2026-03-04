@@ -374,6 +374,12 @@ class SDKRunner(EngineProtocol):
         if tool_search and tool_search != "auto":
             env_opts["ENABLE_TOOL_SEARCH"] = tool_search
 
+        # Adaptive thinking via --effort flag
+        extra_args: dict[str, str | None] = {}
+        sdk_effort = self._config.agents.defaults.sdk_effort
+        if sdk_effort:
+            extra_args["--effort"] = sdk_effort
+
         options = ClaudeAgentOptions(
             model=effective_model,
             system_prompt=system_prompt,
@@ -382,6 +388,7 @@ class SDKRunner(EngineProtocol):
             cwd=self._cwd,
             allowed_tools=allowed_tools if allowed_tools else None,
             env=env_opts if env_opts else None,
+            extra_args=extra_args if extra_args else {},
         )
 
         tool_calls_made: list[str] = []
