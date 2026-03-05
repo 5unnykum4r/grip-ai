@@ -324,3 +324,34 @@ class TestToolsConfigEnableToolSearch:
     def test_in_grip_config(self):
         config = GripConfig(tools={"enable_tool_search": "auto:15"})
         assert config.tools.enable_tool_search == "auto:15"
+
+
+class TestSdkEffortConfig:
+    def test_default_is_none(self):
+        defaults = AgentDefaults()
+        assert defaults.sdk_effort is None
+
+    def test_valid_effort_levels(self):
+        for level in ("low", "medium", "high", "max"):
+            defaults = AgentDefaults(sdk_effort=level)
+            assert defaults.sdk_effort == level
+
+    def test_none_is_accepted(self):
+        defaults = AgentDefaults(sdk_effort=None)
+        assert defaults.sdk_effort is None
+
+    def test_invalid_effort_rejected(self):
+        with pytest.raises(ValidationError):
+            AgentDefaults(sdk_effort="hgih")
+
+    def test_empty_string_rejected(self):
+        with pytest.raises(ValidationError):
+            AgentDefaults(sdk_effort="")
+
+    def test_effort_via_grip_config(self):
+        config = GripConfig(agents={"defaults": {"sdk_effort": "medium"}})
+        assert config.agents.defaults.sdk_effort == "medium"
+
+    def test_effort_none_via_grip_config(self):
+        config = GripConfig(agents={"defaults": {}})
+        assert config.agents.defaults.sdk_effort is None

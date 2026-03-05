@@ -880,3 +880,66 @@ class TestSDKRunnerSkillsInPrompt:
 
         assert "web_search" in prompt
         assert "Search the web" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Tests: sdk_effort → extra_args wiring
+# ---------------------------------------------------------------------------
+
+
+class TestSDKRunnerEffort:
+    """sdk_effort config should flow into ClaudeAgentOptions.extra_args."""
+
+    @pytest.mark.asyncio
+    async def test_effort_passed_to_extra_args(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {
+                "workspace": str(tmp_workspace),
+                "semantic_cache_enabled": False,
+                "sdk_effort": "medium",
+            }},
+            tools={"restrict_to_workspace": True},
+            providers={"anthropic": {"api_key": "test-key-12345"}},
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+
+        result_msg = MagicMock()
+        result_msg.__class__ = _mock_sdk.ResultMessage
+        result_msg.result = "ok"
+        _MockClaudeSDKClient._messages = [result_msg]
+
+        _mock_sdk.ClaudeAgentOptions.reset_mock()
+
+        await runner.run("test", session_key="s")
+
+        call_kwargs = _mock_sdk.ClaudeAgentOptions.call_args
+        assert call_kwargs.kwargs.get("extra_args") == {"effort": "medium"}
+
+    @pytest.mark.asyncio
+    async def test_no_effort_means_empty_extra_args(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        config = GripConfig(
+            agents={"defaults": {
+                "workspace": str(tmp_workspace),
+                "semantic_cache_enabled": False,
+            }},
+            tools={"restrict_to_workspace": True},
+            providers={"anthropic": {"api_key": "test-key-12345"}},
+        )
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+
+        result_msg = MagicMock()
+        result_msg.__class__ = _mock_sdk.ResultMessage
+        result_msg.result = "ok"
+        _MockClaudeSDKClient._messages = [result_msg]
+
+        _mock_sdk.ClaudeAgentOptions.reset_mock()
+
+        await runner.run("test", session_key="s")
+
+        call_kwargs = _mock_sdk.ClaudeAgentOptions.call_args
+        extra = call_kwargs.kwargs.get("extra_args", {})
+        assert extra == {}

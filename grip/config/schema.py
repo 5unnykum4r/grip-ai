@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import platform as _platform
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -131,7 +131,7 @@ class AgentDefaults(BaseModel):
         default="acceptEdits",
         description="SDK permission mode: 'acceptEdits', 'bypassPermissions', or 'default'.",
     )
-    sdk_effort: str | None = Field(
+    sdk_effort: Literal["low", "medium", "high", "max"] | None = Field(
         default=None,
         description="Adaptive thinking effort: 'low', 'medium', 'high', or 'max' (Opus 4.6 only). "
         "Enables adaptive thinking via --effort CLI flag. None = model default.",
