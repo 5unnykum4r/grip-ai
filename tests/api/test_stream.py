@@ -9,13 +9,47 @@ from fastapi.testclient import TestClient
 
 from grip.api.rate_limit import SlidingWindowRateLimiter
 from grip.api.routers.chat import router
-from grip.engines.types import AgentRunResult
+from grip.engines.types import StreamEvent
 
 
-def _build_test_app(engine_mock: AsyncMock) -> FastAPI:
-    """Create a minimal FastAPI app with the chat router and mocked state."""
+async def _mock_run_stream_simple(*_args, **_kwargs):
+    """Yield a basic token + done stream."""
+    yield StreamEvent(type="token", text="Hello!")
+    yield StreamEvent(
+        type="done",
+        iterations=1,
+        prompt_tokens=10,
+        completion_tokens=5,
+        tool_calls_made=[],
+    )
+
+
+async def _mock_run_stream_with_tools(*_args, **_kwargs):
+    """Yield a stream that includes tool events."""
+    yield StreamEvent(type="tool_start", tool_name="web_search")
+    yield StreamEvent(type="tool_end", tool_name="web_search")
+    yield StreamEvent(type="token", text="Test response")
+    yield StreamEvent(
+        type="done",
+        iterations=2,
+        prompt_tokens=15,
+        completion_tokens=8,
+        tool_calls_made=["web_search"],
+    )
+
+
+async def _mock_run_stream_error(*_args, **_kwargs):
+    raise RuntimeError("Engine blew up")
+    yield  # make it an async generator  # noqa: E501, RUF028
+
+
+def _build_test_app(run_stream_fn) -> FastAPI:
+    """Create a minimal FastAPI app with the chat router and mocked engine."""
     app = FastAPI()
     app.include_router(router)
+
+    engine_mock = AsyncMock()
+    engine_mock.run_stream = run_stream_fn
 
     app.state.auth_token = "test-token-123"
     app.state.engine = engine_mock
@@ -24,31 +58,12 @@ def _build_test_app(engine_mock: AsyncMock) -> FastAPI:
     return app
 
 
-def _make_engine_mock(
-    response: str = "Hello!",
-    iterations: int = 1,
-    prompt_tokens: int = 10,
-    completion_tokens: int = 5,
-    tool_calls_made: list[str] | None = None,
-) -> AsyncMock:
-    mock = AsyncMock()
-    mock.run.return_value = AgentRunResult(
-        response=response,
-        iterations=iterations,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        tool_calls_made=tool_calls_made or [],
-    )
-    return mock
-
-
 AUTH_HEADERS = {"Authorization": "Bearer test-token-123"}
 
 
 class TestStreamEndpointContentType:
     def test_stream_endpoint_returns_event_stream(self):
-        engine = _make_engine_mock()
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -62,8 +77,7 @@ class TestStreamEndpointContentType:
 
 class TestStreamEndpointAuth:
     def test_stream_requires_auth(self):
-        engine = _make_engine_mock()
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -73,8 +87,7 @@ class TestStreamEndpointAuth:
         assert response.status_code == 401
 
     def test_stream_rejects_bad_token(self):
-        engine = _make_engine_mock()
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -86,15 +99,8 @@ class TestStreamEndpointAuth:
 
 
 class TestStreamEventStructure:
-    def test_stream_events_include_start_message_done(self):
-        engine = _make_engine_mock(
-            response="Test response",
-            iterations=2,
-            prompt_tokens=15,
-            completion_tokens=8,
-            tool_calls_made=["web_search"],
-        )
-        app = _build_test_app(engine)
+    def test_stream_events_include_start_token_done(self):
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -106,12 +112,11 @@ class TestStreamEventStructure:
 
         body = response.text
         assert "event: start" in body
-        assert "event: message" in body
+        assert "event: token" in body
         assert "event: done" in body
 
     def test_stream_start_event_contains_session_key(self):
-        engine = _make_engine_mock()
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -123,8 +128,7 @@ class TestStreamEventStructure:
         assert '"session_key": "test:session1"' in body or '"session_key":"test:session1"' in body
 
     def test_stream_done_event_contains_usage(self):
-        engine = _make_engine_mock(prompt_tokens=42, completion_tokens=17)
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_simple)
         client = TestClient(app)
 
         response = client.post(
@@ -133,13 +137,37 @@ class TestStreamEventStructure:
             headers=AUTH_HEADERS,
         )
         body = response.text
-        assert "42" in body
-        assert "17" in body
+        assert "10" in body
+        assert "5" in body
+
+    def test_stream_token_event_contains_text(self):
+        app = _build_test_app(_mock_run_stream_simple)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "Hello"},
+            headers=AUTH_HEADERS,
+        )
+        body = response.text
+        assert '"text": "Hello!"' in body or '"text":"Hello!"' in body
+
+    def test_stream_includes_tool_events(self):
+        app = _build_test_app(_mock_run_stream_with_tools)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "Search"},
+            headers=AUTH_HEADERS,
+        )
+        body = response.text
+        assert "event: tool_start" in body
+        assert "event: tool_end" in body
+        assert "web_search" in body
 
     def test_stream_error_event_on_engine_failure(self):
-        engine = AsyncMock()
-        engine.run.side_effect = RuntimeError("Engine blew up")
-        app = _build_test_app(engine)
+        app = _build_test_app(_mock_run_stream_error)
         client = TestClient(app)
 
         response = client.post(

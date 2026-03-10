@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,6 +91,22 @@ class LLMResponse:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class StreamDelta:
+    """A single incremental chunk from a streaming LLM response.
+
+    Provider ``chat_stream()`` implementations yield these as tokens arrive.
+    Fields are populated incrementally — only ``content`` or ``tool_calls``
+    will be set on any given delta, and ``usage`` / ``done`` only appear on
+    the final chunk.
+    """
+
+    content: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: TokenUsage | None = None
+    done: bool = False
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM provider adapters.
 
@@ -109,6 +126,34 @@ class LLMProvider(ABC):
     ) -> LLMResponse:
         """Send a chat completion request and return the parsed response."""
         ...
+
+    async def chat_stream(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[StreamDelta]:
+        """Stream incremental deltas from the LLM.
+
+        Default implementation falls back to ``chat()`` and yields the full
+        response as a single delta. Providers override this for true streaming.
+        """
+        response = await self.chat(
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        yield StreamDelta(
+            content=response.content,
+            tool_calls=response.tool_calls,
+            usage=response.usage,
+            done=True,
+        )
 
     @abstractmethod
     def supports_tools(self) -> bool:

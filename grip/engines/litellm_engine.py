@@ -8,12 +8,13 @@ and the new flat ``AgentRunResult`` used by the dual-engine protocol.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from grip.agent.loop import AgentLoop
 from grip.agent.loop import AgentRunResult as OldAgentRunResult
 from grip.config.schema import GripConfig
-from grip.engines.types import AgentRunResult, EngineProtocol, ToolCallDetail
+from grip.engines.types import AgentRunResult, EngineProtocol, StreamEvent, ToolCallDetail
 from grip.memory import MemoryManager
 from grip.memory.semantic_cache import SemanticCache
 from grip.providers.registry import create_provider
@@ -134,6 +135,19 @@ class LiteLLMRunner(EngineProtocol):
             tool_calls_made=old_result.tool_calls_made,
             tool_details=new_details,
         )
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream incremental events by delegating to AgentLoop.run_stream()."""
+        async for event in self._loop.run_stream(
+            user_message, session_key=session_key, model=model
+        ):
+            yield event
 
     async def consolidate_session(self, session_key: str) -> None:
         """Summarise and compact conversation history for the given session.

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +31,7 @@ from loguru import logger
 from grip.agent.context import ContextBuilder
 from grip.agent.router import ModelTiers, classify_complexity, select_model
 from grip.config.schema import GripConfig
+from grip.engines.types import StreamEvent
 from grip.memory.manager import MemoryManager
 from grip.memory.semantic_cache import SemanticCache
 from grip.providers.types import LLMMessage, LLMProvider, LLMResponse, TokenUsage, ToolCall
@@ -436,6 +437,216 @@ class AgentLoop:
         if session:
             await self._maybe_consolidate(session)
         return result
+
+    # ── Streaming entry point ──
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        session_messages: list[LLMMessage] | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute a full agent run, yielding StreamEvents for real-time output.
+
+        Uses non-streaming ``chat()`` for intermediate iterations (tool calls)
+        and streaming ``chat_stream()`` for the final text response to deliver
+        tokens to the client as they arrive.
+        """
+        defaults = self._config.agents.defaults
+
+        # Model selection (same logic as run())
+        if model:
+            effective_model = model
+        elif self._config.agents.model_tiers.enabled:
+            tiers_cfg = self._config.agents.model_tiers
+            session_tool_count = sum(
+                len(m.tool_calls) for m in (session_messages or []) if m.tool_calls
+            )
+            complexity = classify_complexity(
+                user_message, tool_calls_in_session=session_tool_count,
+            )
+            effective_model = select_model(
+                defaults.model,
+                ModelTiers(low=tiers_cfg.low, medium=tiers_cfg.medium, high=tiers_cfg.high),
+                complexity,
+            )
+        else:
+            effective_model = defaults.model
+
+        # Semantic cache check
+        if self._semantic_cache:
+            cached = self._semantic_cache.get(user_message, effective_model)
+            if cached is not None:
+                logger.info("Semantic cache hit — returning cached response (stream)")
+                self._persist_session(
+                    self._session_mgr.get_or_create(session_key) if self._session_mgr else None,
+                    user_message,
+                    cached,
+                )
+                yield StreamEvent(type="token", text=cached)
+                yield StreamEvent(type="done", iterations=0)
+                return
+
+        immediate_window = min(defaults.memory_window, 10)
+        session: Session | None = None
+        session_summary: str | None = None
+
+        if self._session_mgr:
+            session = self._session_mgr.get_or_create(session_key)
+            history = session.get_recent(immediate_window)
+            session_summary = session.summary
+        elif session_messages:
+            history = session_messages[-immediate_window:]
+        else:
+            history = []
+
+        tool_defs = self._get_tool_definitions()
+        system_msg = self._context_builder.build_system_message(
+            user_message=user_message, session_key=session_key,
+        )
+        messages: list[LLMMessage] = [system_msg]
+
+        if session_summary:
+            messages.append(LLMMessage(role="system", content=session_summary))
+
+        if self._memory_mgr:
+            relevant_context = self._retrieve_relevant_context(user_message)
+            if relevant_context:
+                messages.append(LLMMessage(role="system", content=relevant_context))
+
+        messages.extend(history)
+        messages.append(LLMMessage(role="user", content=user_message))
+
+        tools = tool_defs if tool_defs else None
+        tool_ctx = self._build_tool_context(session_key)
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        all_tool_calls: list[str] = []
+
+        max_iter = defaults.max_tool_iterations
+        iteration = 0
+
+        while True:
+            iteration += 1
+            if max_iter > 0 and iteration > max_iter:
+                break
+
+            if iteration > 1:
+                messages = await self._maybe_compact_mid_run(messages, effective_model)
+
+            # Non-streaming call to check for tool calls
+            response = await self._call_llm(
+                messages, tools=tools, model=effective_model,
+                temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+            )
+            total_prompt_tokens += response.usage.prompt_tokens
+            total_completion_tokens += response.usage.completion_tokens
+
+            if not response.tool_calls:
+                # Final response — re-call with streaming for token-by-token output
+                final_parts: list[str] = []
+                async for delta in self._provider.chat_stream(
+                    messages, model=effective_model, tools=tools,
+                    temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+                ):
+                    if delta.content:
+                        yield StreamEvent(type="token", text=delta.content)
+                        final_parts.append(delta.content)
+                    if delta.usage:
+                        total_prompt_tokens += delta.usage.prompt_tokens
+                        total_completion_tokens += delta.usage.completion_tokens
+
+                final_text = "".join(final_parts)
+                self._persist_session(session, user_message, final_text)
+                if session:
+                    await self._maybe_consolidate(session)
+
+                if self._semantic_cache and not all_tool_calls:
+                    self._semantic_cache.put(user_message, effective_model, final_text)
+
+                yield StreamEvent(
+                    type="done",
+                    iterations=iteration,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    tool_calls_made=all_tool_calls,
+                )
+                return
+
+            # Tool iteration — execute tools and emit progress events
+            messages.append(
+                LLMMessage(role="assistant", content=response.content, tool_calls=response.tool_calls)
+            )
+
+            for tc in response.tool_calls:
+                yield StreamEvent(type="tool_start", tool_name=tc.function_name)
+
+            exec_results = await asyncio.gather(
+                *(self._execute_tool(tc, tool_ctx) for tc in response.tool_calls)
+            )
+
+            for exec_result in exec_results:
+                all_tool_calls.append(exec_result.tool_name)
+                scrubbed_output = _scrub_secrets(exec_result.output)
+                messages.append(
+                    LLMMessage(
+                        role="tool", content=scrubbed_output,
+                        tool_call_id=exec_result.tool_call_id, name=exec_result.tool_name,
+                    )
+                )
+                yield StreamEvent(type="tool_end", tool_name=exec_result.tool_name)
+
+            failed_tools = [
+                f"{er.tool_name}: {er.output[:200]}"
+                for er in exec_results if not er.success
+            ]
+            if failed_tools and defaults.enable_self_correction:
+                failure_summary = "; ".join(failed_tools)
+                messages.append(
+                    LLMMessage(
+                        role="system",
+                        content=(
+                            f"[Self-correction] The following tool calls failed: {failure_summary}. "
+                            "Before proceeding, analyze what went wrong and adjust your approach. "
+                            "Consider: wrong arguments, missing prerequisites, or alternative tools."
+                        ),
+                    )
+                )
+
+        # Exhausted max iterations — force a final text response via streaming
+        logger.warning("Agent hit max iterations ({}), generating forced response (stream)", max_iter)
+        exhaust_msg = (
+            "I've reached my maximum number of tool iterations for this request. "
+            "Here's what I've done so far based on the tool results above."
+        )
+        messages.append(LLMMessage(role="user", content=exhaust_msg))
+
+        final_parts = []
+        async for delta in self._provider.chat_stream(
+            messages, model=effective_model, tools=None,
+            temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+        ):
+            if delta.content:
+                yield StreamEvent(type="token", text=delta.content)
+                final_parts.append(delta.content)
+            if delta.usage:
+                total_prompt_tokens += delta.usage.prompt_tokens
+                total_completion_tokens += delta.usage.completion_tokens
+
+        final_text = "".join(final_parts) or "I was unable to complete the request within the iteration limit."
+        self._persist_session(session, user_message, final_text)
+        if session:
+            await self._maybe_consolidate(session)
+
+        yield StreamEvent(
+            type="done",
+            iterations=iteration - 1,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            tool_calls_made=all_tool_calls,
+        )
 
     # ── Session persistence ──
 

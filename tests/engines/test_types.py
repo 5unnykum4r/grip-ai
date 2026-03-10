@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from grip.engines.types import AgentRunResult, EngineProtocol, ToolCallDetail
+from grip.engines.types import AgentRunResult, EngineProtocol, StreamEvent, ToolCallDetail
 
 # -- ToolCallDetail ----------------------------------------------------------
 
@@ -121,3 +121,58 @@ class TestEngineProtocol:
 
         with pytest.raises(TypeError):
             PartialEngine()  # type: ignore[abstract]
+
+
+# -- StreamEvent --------------------------------------------------------------
+
+
+class TestStreamEvent:
+    def test_token_event(self):
+        e = StreamEvent(type="token", text="hello")
+        assert e.type == "token"
+        assert e.text == "hello"
+        assert e.tool_name == ""
+
+    def test_done_event(self):
+        e = StreamEvent(
+            type="done",
+            iterations=3,
+            prompt_tokens=10,
+            completion_tokens=5,
+            tool_calls_made=["web_search"],
+        )
+        assert e.type == "done"
+        assert e.iterations == 3
+        assert e.prompt_tokens == 10
+        assert e.completion_tokens == 5
+        assert e.tool_calls_made == ["web_search"]
+
+    def test_tool_start_event(self):
+        e = StreamEvent(type="tool_start", tool_name="web_search")
+        assert e.type == "tool_start"
+        assert e.tool_name == "web_search"
+
+    def test_tool_end_event(self):
+        e = StreamEvent(type="tool_end", tool_name="read_file")
+        assert e.type == "tool_end"
+        assert e.tool_name == "read_file"
+
+    def test_error_event(self):
+        e = StreamEvent(type="error", text="something went wrong")
+        assert e.type == "error"
+        assert e.text == "something went wrong"
+
+    def test_defaults(self):
+        e = StreamEvent(type="token")
+        assert e.text == ""
+        assert e.tool_name == ""
+        assert e.iterations == 0
+        assert e.prompt_tokens == 0
+        assert e.completion_tokens == 0
+        assert e.tool_calls_made == []
+
+    def test_mutable_list_defaults_are_independent(self):
+        a = StreamEvent(type="done")
+        b = StreamEvent(type="done")
+        a.tool_calls_made.append("x")
+        assert b.tool_calls_made == []

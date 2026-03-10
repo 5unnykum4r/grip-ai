@@ -1,7 +1,7 @@
 """Chat endpoints for the grip REST API.
 
 POST /api/v1/chat        — blocking request/response
-POST /api/v1/chat/stream — Server-Sent Events stream with start/message/done events
+POST /api/v1/chat/stream — Server-Sent Events stream with token/tool/done events
 """
 
 from __future__ import annotations
@@ -108,10 +108,12 @@ async def chat_stream(
     """Send a message to the agent and stream the response as Server-Sent Events.
 
     Event types:
-      - ``start``   — session_key for correlation
-      - ``message`` — the agent's full response text
-      - ``done``    — iterations, usage, and tool_calls_made
-      - ``error``   — detail string if execution fails
+      - ``start``      — session_key for correlation
+      - ``token``      — incremental text chunk from the LLM
+      - ``tool_start`` — a tool execution is beginning
+      - ``tool_end``   — a tool execution finished
+      - ``done``       — iterations, usage, and tool_calls_made
+      - ``error``      — detail string if execution fails
     """
     check_token_rate_limit(request, token)
 
@@ -120,28 +122,45 @@ async def chat_stream(
     async def event_generator() -> AsyncGenerator[dict, None]:
         yield {"event": "start", "data": json.dumps({"session_key": session_key})}
         try:
-            result = await engine.run(
+            async for event in engine.run_stream(
                 body.message,
                 session_key=session_key,
                 model=body.model,
-            )
-            yield {
-                "event": "message",
-                "data": json.dumps({"text": result.response}),
-            }
-            yield {
-                "event": "done",
-                "data": json.dumps(
-                    {
-                        "iterations": result.iterations,
-                        "usage": {
-                            "prompt_tokens": result.prompt_tokens,
-                            "completion_tokens": result.completion_tokens,
-                        },
-                        "tool_calls_made": result.tool_calls_made,
+            ):
+                if event.type == "token":
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"text": event.text}),
                     }
-                ),
-            }
+                elif event.type == "tool_start":
+                    yield {
+                        "event": "tool_start",
+                        "data": json.dumps({"tool": event.tool_name}),
+                    }
+                elif event.type == "tool_end":
+                    yield {
+                        "event": "tool_end",
+                        "data": json.dumps({"tool": event.tool_name}),
+                    }
+                elif event.type == "done":
+                    yield {
+                        "event": "done",
+                        "data": json.dumps(
+                            {
+                                "iterations": event.iterations,
+                                "usage": {
+                                    "prompt_tokens": event.prompt_tokens,
+                                    "completion_tokens": event.completion_tokens,
+                                },
+                                "tool_calls_made": event.tool_calls_made,
+                            }
+                        ),
+                    }
+                elif event.type == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"detail": event.text}),
+                    }
         except Exception:
             yield {
                 "event": "error",

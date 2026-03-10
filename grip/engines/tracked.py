@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from grip.engines.types import AgentRunResult, EngineProtocol
+from collections.abc import AsyncIterator
+
+from grip.engines.types import AgentRunResult, EngineProtocol, StreamEvent
 from grip.security.token_tracker import TokenTracker
 
 
@@ -34,6 +36,22 @@ class TrackedEngine(EngineProtocol):
         result = await self._inner.run(user_message, session_key=session_key, model=model)
         self._tracker.record(result.prompt_tokens, result.completion_tokens)
         return result
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Check token limit, forward the stream, record usage from the done event."""
+        self._tracker.check_limit()
+        async for event in self._inner.run_stream(
+            user_message, session_key=session_key, model=model
+        ):
+            if event.type == "done":
+                self._tracker.record(event.prompt_tokens, event.completion_tokens)
+            yield event
 
     async def consolidate_session(self, session_key: str) -> None:
         await self._inner.consolidate_session(session_key)

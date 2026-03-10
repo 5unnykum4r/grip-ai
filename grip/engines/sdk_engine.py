@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +31,7 @@ from claude_agent_sdk import (
 )
 from loguru import logger
 
-from grip.engines.types import AgentRunResult, EngineProtocol
+from grip.engines.types import AgentRunResult, EngineProtocol, StreamEvent
 from grip.skills.loader import SkillsLoader
 
 if TYPE_CHECKING:
@@ -428,6 +428,88 @@ class SDKRunner(EngineProtocol):
 
         return AgentRunResult(
             response=response_text,
+            tool_calls_made=tool_calls_made,
+        )
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream incremental events from the Claude Agent SDK.
+
+        Parses ``AssistantMessage`` content blocks for text and tool use,
+        yielding ``StreamEvent`` objects as they arrive. The SDK's
+        ``client.receive_response()`` already delivers messages incrementally.
+        """
+        custom_tools = self._custom_tools
+        system_prompt = self._build_system_prompt(user_message, session_key, custom_tools)
+        mcp_config = self._mcp_config
+        allowed_tools = list(self._allowed_tools_base)
+        effective_model = model or self._model
+
+        grip_server = create_sdk_mcp_server(
+            "grip_tools", version="1.0.0", tools=custom_tools
+        )
+        mcp_servers: dict[str, Any] = {srv["name"]: srv for srv in mcp_config}
+        mcp_servers["grip_tools"] = grip_server
+
+        custom_tool_names = [f"mcp__grip_tools__{t.name}" for t in custom_tools]
+        allowed_tools.extend(custom_tool_names)
+
+        extra_args: dict[str, str | None] = {}
+        sdk_effort = self._config.agents.defaults.sdk_effort
+        if sdk_effort:
+            extra_args["effort"] = sdk_effort
+
+        env_opts: dict[str, str] = {"CLAUDECODE": ""}
+        if self._api_key:
+            env_opts["ANTHROPIC_API_KEY"] = self._api_key
+        tool_search = self._config.tools.enable_tool_search
+        if tool_search and tool_search != "auto":
+            env_opts["ENABLE_TOOL_SEARCH"] = tool_search
+
+        options = ClaudeAgentOptions(
+            model=effective_model,
+            system_prompt=system_prompt,
+            mcp_servers=mcp_servers,
+            permission_mode=self._permission_mode,
+            cwd=self._cwd,
+            allowed_tools=allowed_tools if allowed_tools else None,
+            env=env_opts if env_opts else None,
+            extra_args=extra_args if extra_args else {},
+        )
+
+        tool_calls_made: list[str] = []
+        result_text: str | None = None
+
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(user_message)
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in getattr(message, "content", []):
+                            if hasattr(block, "text"):
+                                yield StreamEvent(type="token", text=block.text)
+                            if hasattr(block, "name"):
+                                tool_calls_made.append(block.name)
+                                yield StreamEvent(type="tool_start", tool_name=block.name)
+                    elif isinstance(message, ResultMessage) and getattr(message, "result", None):
+                        result_text = message.result
+        except ExceptionGroup as eg:
+            _cli_errors, rest = eg.split(CLIConnectionError)
+            if rest:
+                raise rest from eg
+            logger.debug("Suppressed CLIConnectionError during stream cleanup: {}", eg)
+
+        response_text = result_text or ""
+        self._memory_mgr.append_history(f"User ({session_key}): {user_message[:200]}")
+        self._memory_mgr.append_history(f"Agent ({session_key}): {response_text[:200]}")
+
+        yield StreamEvent(
+            type="done",
             tool_calls_made=tool_calls_made,
         )
 

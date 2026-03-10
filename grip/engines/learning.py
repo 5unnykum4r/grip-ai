@@ -8,9 +8,11 @@ system prompts.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from loguru import logger
 
-from grip.engines.types import AgentRunResult, EngineProtocol
+from grip.engines.types import AgentRunResult, EngineProtocol, StreamEvent
 from grip.memory.knowledge_base import KnowledgeBase
 from grip.memory.pattern_extractor import PatternExtractor
 
@@ -64,6 +66,40 @@ class LearningEngine(EngineProtocol):
             logger.debug("Behavioral extraction failed (non-fatal): {}", exc)
 
         return result
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Forward the inner stream, then extract behavioral patterns from the result."""
+        response_parts: list[str] = []
+        tool_calls: list[str] = []
+
+        async for event in self._inner.run_stream(
+            user_message, session_key=session_key, model=model
+        ):
+            if event.type == "token":
+                response_parts.append(event.text)
+            elif event.type == "done":
+                tool_calls = list(event.tool_calls_made)
+            yield event
+
+        try:
+            full_response = "".join(response_parts)
+            patterns = self._extractor.extract(user_message, full_response, tool_calls)
+            for p in patterns:
+                self._kb.add(p.category, p.content, source=p.source, tags=p.tags)
+            self._kb.flush()
+            if patterns:
+                logger.debug(
+                    "Extracted {} behavioral pattern(s) from streamed interaction",
+                    len(patterns),
+                )
+        except Exception as exc:
+            logger.debug("Behavioral extraction failed (non-fatal): {}", exc)
 
     async def consolidate_session(self, session_key: str) -> None:
         await self._inner.consolidate_session(session_key)

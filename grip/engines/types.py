@@ -7,6 +7,7 @@ returns ``AgentRunResult`` objects so callers never depend on a specific backend
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 
@@ -41,6 +42,27 @@ class AgentRunResult:
         return self.prompt_tokens + self.completion_tokens
 
 
+@dataclass(slots=True)
+class StreamEvent:
+    """A single event yielded by ``EngineProtocol.run_stream()``.
+
+    Event types:
+      - ``"token"``: incremental text chunk (``text`` field)
+      - ``"tool_start"``: a tool execution is beginning (``tool_name`` field)
+      - ``"tool_end"``: a tool execution finished (``tool_name`` field)
+      - ``"done"``: stream complete (usage and tool_calls_made fields)
+      - ``"error"``: an error occurred (``text`` field contains detail)
+    """
+
+    type: str
+    text: str = ""
+    tool_name: str = ""
+    iterations: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    tool_calls_made: list[str] = field(default_factory=list)
+
+
 class EngineProtocol(ABC):
     """Abstract base class that both engine implementations must satisfy.
 
@@ -57,6 +79,29 @@ class EngineProtocol(ABC):
         model: str | None = None,
     ) -> AgentRunResult:
         """Send a user message through the engine and return the result."""
+
+    async def run_stream(
+        self,
+        user_message: str,
+        *,
+        session_key: str = "cli:default",
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream incremental events during agent execution.
+
+        Default implementation falls back to ``run()`` and yields the full
+        response as a single token event followed by a done event.
+        Engines override this for true token-by-token streaming.
+        """
+        result = await self.run(user_message, session_key=session_key, model=model)
+        yield StreamEvent(type="token", text=result.response)
+        yield StreamEvent(
+            type="done",
+            iterations=result.iterations,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            tool_calls_made=result.tool_calls_made,
+        )
 
     @abstractmethod
     async def consolidate_session(self, session_key: str) -> None:

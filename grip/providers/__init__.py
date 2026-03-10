@@ -3,6 +3,7 @@ from grip.providers.types import (
     LLMMessage,
     LLMProvider,
     LLMResponse,
+    StreamDelta,
     TokenUsage,
     ToolCall,
 )
@@ -11,6 +12,7 @@ __all__ = [
     "LLMMessage",
     "LLMResponse",
     "LLMProvider",
+    "StreamDelta",
     "ToolCall",
     "TokenUsage",
     "ProviderRegistry",

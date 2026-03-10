@@ -8,7 +8,8 @@ through a single interface.
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, NoReturn
 
 from loguru import logger
 
@@ -16,6 +17,7 @@ from grip.providers.types import (
     LLMMessage,
     LLMProvider,
     LLMResponse,
+    StreamDelta,
     TokenUsage,
     ToolCall,
 )
@@ -84,38 +86,10 @@ class LiteLLMProvider(LLMProvider):
     ) -> LLMResponse:
         import litellm
 
-        if not LiteLLMProvider._litellm_configured:
-            litellm.drop_params = True
-            litellm.suppress_debug_info = True
-            LiteLLMProvider._litellm_configured = True
-
-        resolved_model = model or self._default_model
-        if self._model_prefix and not resolved_model.startswith(self._model_prefix):
-            resolved_model = f"{self._model_prefix}/{resolved_model}"
-
-        kwargs: dict[str, Any] = {
-            "model": resolved_model,
-            "messages": [m.to_dict() for m in messages],
-        }
-
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        if self._api_base:
-            kwargs["api_base"] = self._api_base
-        if self._api_key:
-            kwargs["api_key"] = self._api_key
-
-        if self._provider_name == "openrouter":
-            kwargs["extra_headers"] = {
-                "X-Title": "Grip AI",
-                "HTTP-Referer": "https://github.com/5unnykum4r/grip-ai",
-            }
+        kwargs, resolved_model = self._build_kwargs(
+            messages, model=model, tools=tools,
+            temperature=temperature, max_tokens=max_tokens,
+        )
 
         tool_count = len(tools) if tools else 0
         logger.info(
@@ -128,47 +102,7 @@ class LiteLLMProvider(LLMProvider):
         try:
             response = await litellm.acompletion(**kwargs)
         except Exception as exc:
-            from grip.providers.exceptions import (
-                AuthenticationError,
-                ProviderError,
-                RateLimitError,
-                ServerError,
-            )
-
-            exc_str = str(exc).lower()
-            status = getattr(exc, "status_code", None)
-
-            if status == 401 or "authenticationerror" in type(exc).__name__.lower():
-                raise AuthenticationError(
-                    f"[{self._provider_name}] Authentication failed — your API key is invalid or missing.",
-                    provider=self._provider_name,
-                    hint="Run 'grip setup' to reconfigure your API key.",
-                ) from exc
-            if status == 429 or "ratelimit" in exc_str:
-                raise RateLimitError(
-                    f"[{self._provider_name}] Rate limit exceeded.",
-                    provider=self._provider_name,
-                    hint="Wait a moment and try again.",
-                ) from exc
-            if status and status >= 500:
-                raise ServerError(
-                    f"[{self._provider_name}] Provider server error (HTTP {status}).",
-                    provider=self._provider_name,
-                    hint="Try again in a moment.",
-                ) from exc
-            if "notfounderror" in type(exc).__name__.lower() or status == 404:
-                from grip.providers.exceptions import ModelNotFoundError
-
-                raise ModelNotFoundError(
-                    f"[{self._provider_name}] Model '{resolved_model}' not found.",
-                    provider=self._provider_name,
-                    hint="Check available models on your provider's docs.",
-                ) from exc
-
-            raise ProviderError(
-                f"[{self._provider_name}] {exc}",
-                provider=self._provider_name,
-            ) from exc
+            self._raise_provider_error(exc, resolved_model)
 
         return self._parse_response(response)
 
@@ -209,6 +143,207 @@ class LiteLLMProvider(LLMProvider):
             reasoning_content=reasoning,
             raw=response.model_dump() if hasattr(response, "model_dump") else {},
         )
+
+    def _build_kwargs(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str | None,
+        tools: list[dict[str, Any]] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+    ) -> tuple[dict[str, Any], str]:
+        """Build the kwargs dict for litellm.acompletion and return (kwargs, resolved_model)."""
+        import litellm
+
+        if not LiteLLMProvider._litellm_configured:
+            litellm.drop_params = True
+            litellm.suppress_debug_info = True
+            LiteLLMProvider._litellm_configured = True
+
+        resolved_model = model or self._default_model
+        if self._model_prefix and not resolved_model.startswith(self._model_prefix):
+            resolved_model = f"{self._model_prefix}/{resolved_model}"
+
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": [m.to_dict() for m in messages],
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        if self._api_base:
+            kwargs["api_base"] = self._api_base
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+        if self._provider_name == "openrouter":
+            kwargs["extra_headers"] = {
+                "X-Title": "Grip AI",
+                "HTTP-Referer": "https://github.com/5unnykum4r/grip-ai",
+            }
+
+        return kwargs, resolved_model
+
+    def _raise_provider_error(self, exc: Exception, resolved_model: str) -> NoReturn:
+        """Map provider exceptions to grip's error hierarchy. Always raises."""
+        from grip.providers.exceptions import (
+            AuthenticationError,
+            ModelNotFoundError,
+            ProviderError,
+            RateLimitError,
+            ServerError,
+        )
+
+        exc_str = str(exc).lower()
+        status = getattr(exc, "status_code", None)
+
+        if status == 401 or "authenticationerror" in type(exc).__name__.lower():
+            raise AuthenticationError(
+                f"[{self._provider_name}] Authentication failed — your API key is invalid or missing.",
+                provider=self._provider_name,
+                hint="Run 'grip setup' to reconfigure your API key.",
+            ) from exc
+        if status == 429 or "ratelimit" in exc_str:
+            raise RateLimitError(
+                f"[{self._provider_name}] Rate limit exceeded.",
+                provider=self._provider_name,
+                hint="Wait a moment and try again.",
+            ) from exc
+        if status and status >= 500:
+            raise ServerError(
+                f"[{self._provider_name}] Provider server error (HTTP {status}).",
+                provider=self._provider_name,
+                hint="Try again in a moment.",
+            ) from exc
+        if "notfounderror" in type(exc).__name__.lower() or status == 404:
+            raise ModelNotFoundError(
+                f"[{self._provider_name}] Model '{resolved_model}' not found.",
+                provider=self._provider_name,
+                hint="Check available models on your provider's docs.",
+            ) from exc
+
+        raise ProviderError(
+            f"[{self._provider_name}] {exc}",
+            provider=self._provider_name,
+        ) from exc
+
+    async def chat_stream(
+        self,
+        messages: list[LLMMessage],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[StreamDelta]:
+        """Stream incremental deltas from the LLM using litellm.acompletion(stream=True).
+
+        Yields ``StreamDelta`` objects as tokens arrive. Tool calls are
+        accumulated across chunks and emitted on the final delta (when
+        ``finish_reason`` is set). Usage stats appear on the final chunk
+        when supported by the provider.
+        """
+        import litellm
+
+        kwargs, resolved_model = self._build_kwargs(
+            messages, model=model, tools=tools,
+            temperature=temperature, max_tokens=max_tokens,
+        )
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+
+        tool_count = len(tools) if tools else 0
+        logger.info(
+            "LiteLLM stream call: model={}, messages={}, tools={}",
+            resolved_model, len(messages), tool_count,
+        )
+
+        try:
+            response = await litellm.acompletion(**kwargs)
+        except Exception as exc:
+            self._raise_provider_error(exc, resolved_model)
+
+        # Accumulate tool_calls across chunks (they arrive in pieces)
+        accumulated_tool_calls: dict[int, dict[str, Any]] = {}
+        total_usage: TokenUsage | None = None
+
+        async for chunk in response:
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                # Final chunk may have usage but no choices
+                usage_data = getattr(chunk, "usage", None)
+                if usage_data:
+                    total_usage = TokenUsage(
+                        prompt_tokens=getattr(usage_data, "prompt_tokens", 0) or 0,
+                        completion_tokens=getattr(usage_data, "completion_tokens", 0) or 0,
+                    )
+                continue
+
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+
+            content = getattr(delta, "content", None)
+
+            # Tool calls arrive incrementally with index-based accumulation
+            raw_tool_calls = getattr(delta, "tool_calls", None)
+            if raw_tool_calls:
+                for tc in raw_tool_calls:
+                    idx = getattr(tc, "index", 0)
+                    if idx not in accumulated_tool_calls:
+                        accumulated_tool_calls[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    entry = accumulated_tool_calls[idx]
+                    tc_id = getattr(tc, "id", None)
+                    if tc_id:
+                        entry["id"] = tc_id
+                    fn = getattr(tc, "function", None)
+                    if fn:
+                        fn_name = getattr(fn, "name", None)
+                        if fn_name:
+                            entry["name"] = fn_name
+                        fn_args = getattr(fn, "arguments", None)
+                        if fn_args:
+                            entry["arguments"] += fn_args
+
+            # Usage from final chunk
+            usage_data = getattr(chunk, "usage", None)
+            if usage_data:
+                total_usage = TokenUsage(
+                    prompt_tokens=getattr(usage_data, "prompt_tokens", 0) or 0,
+                    completion_tokens=getattr(usage_data, "completion_tokens", 0) or 0,
+                )
+
+            finish_reason = getattr(choice, "finish_reason", None)
+            is_done = finish_reason is not None
+
+            if content or is_done:
+                completed_tools: list[ToolCall] = []
+                if is_done and accumulated_tool_calls:
+                    for tc_entry in accumulated_tool_calls.values():
+                        args = self._safe_parse_json(tc_entry["arguments"])
+                        completed_tools.append(
+                            ToolCall(
+                                id=tc_entry["id"],
+                                function_name=tc_entry["name"],
+                                arguments=args,
+                            )
+                        )
+
+                yield StreamDelta(
+                    content=content,
+                    tool_calls=completed_tools if is_done else [],
+                    usage=total_usage if is_done else None,
+                    done=is_done,
+                )
 
     @staticmethod
     def _safe_parse_json(text: str) -> dict[str, Any]:
