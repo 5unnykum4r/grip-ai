@@ -64,8 +64,7 @@ def build_pre_tool_use_hook(
                     return {
                         "decision": "block",
                         "reason": (
-                            f"Directory not trusted: {resolved.parent}. "
-                            "Use /trust to allow access."
+                            f"Directory not trusted: {resolved.parent}. Use /trust to allow access."
                         ),
                     }
 
@@ -80,9 +79,7 @@ def build_post_tool_use_hook() -> list[HookMatcher]:
     async def post_tool_use(input_data, tool_use_id, context) -> dict[str, Any]:
         tool_name = input_data.get("tool_name", "")
         tool_response = input_data.get("tool_response", "")
-        logger.debug(
-            "SDK tool executed: {} -> {} chars output", tool_name, len(str(tool_response))
-        )
+        logger.debug("SDK tool executed: {} -> {} chars output", tool_name, len(str(tool_response)))
         return {}
 
     return [HookMatcher(hooks=[post_tool_use])]

@@ -258,9 +258,7 @@ class ContextBuilder:
             icon = status_icons.get(t.get("status", "pending"), "○")
             priority = t.get("priority", "")
             priority_label = f" [{priority}]" if priority else ""
-            lines.append(
-                f"{icon} [{t['id']}]{priority_label} {t['content']} — {t.get('status')}"
-            )
+            lines.append(f"{icon} [{t['id']}]{priority_label} {t['content']} — {t.get('status')}")
         lines.append("\nUpdate tasks via todo_write as you progress through them.")
         return "\n".join(lines)
 

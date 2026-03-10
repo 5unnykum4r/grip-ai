@@ -141,14 +141,20 @@ class SlackChannel(BaseChannel):
                                         )
                                         resp.raise_for_status()
                                         file_bytes = resp.content
-                                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                                    with tempfile.NamedTemporaryFile(
+                                        suffix=ext, delete=False
+                                    ) as tmp:
                                         tmp_path = Path(tmp.name)
                                     tmp_path.write_bytes(file_bytes)
                                     result = await asyncio.to_thread(
                                         convert_file_to_markdown, tmp_path, max_chars=50_000
                                     )
                                     text += f"\n\n[Document: {fname}]\n\n{result.text_content}"
-                                    logger.debug("Slack: converted file {} ({} chars)", fname, result.original_size)
+                                    logger.debug(
+                                        "Slack: converted file {} ({} chars)",
+                                        fname,
+                                        result.original_size,
+                                    )
                                 else:
                                     text += f"\n\n[User sent file: {fname}]"
                             except ImportError:

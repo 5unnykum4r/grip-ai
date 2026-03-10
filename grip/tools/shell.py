@@ -24,15 +24,30 @@ from grip.tools.base import Tool, ToolContext
 # ---------------------------------------------------------------------------
 # Layer 1: Commands that are always dangerous regardless of arguments
 # ---------------------------------------------------------------------------
-_BLOCKED_COMMANDS: frozenset[str] = frozenset({
-    "mkfs", "mkfs.ext2", "mkfs.ext3", "mkfs.ext4",
-    "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.ntfs",
-    "shutdown", "reboot", "halt", "poweroff",
-})
+_BLOCKED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "mkfs",
+        "mkfs.ext2",
+        "mkfs.ext3",
+        "mkfs.ext4",
+        "mkfs.xfs",
+        "mkfs.btrfs",
+        "mkfs.vfat",
+        "mkfs.ntfs",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+    }
+)
 
-_BLOCKED_SYSTEMCTL_ACTIONS: frozenset[str] = frozenset({
-    "poweroff", "reboot", "halt",
-})
+_BLOCKED_SYSTEMCTL_ACTIONS: frozenset[str] = frozenset(
+    {
+        "poweroff",
+        "reboot",
+        "halt",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Layer 2: rm flag normalization and dangerous target detection
@@ -48,10 +63,21 @@ _RM_LONG_FLAG_MAP: dict[str, str] = {
 }
 
 _DANGEROUS_RM_TARGETS: tuple[str, ...] = (
-    "/", "/*",
-    "~", "$HOME",
-    "/home", "/etc", "/var", "/usr", "/bin", "/sbin",
-    "/lib", "/boot", "/root", "/opt", "/srv",
+    "/",
+    "/*",
+    "~",
+    "$HOME",
+    "/home",
+    "/etc",
+    "/var",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/boot",
+    "/root",
+    "/opt",
+    "/srv",
 )
 
 # ---------------------------------------------------------------------------
@@ -82,6 +108,7 @@ _OUTPUT_LIMIT = 50_000
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _split_shell_commands(command: str) -> list[str]:
     """Split a shell command string on ; && || operators into subcommands.
@@ -263,6 +290,7 @@ def _is_dangerous(command: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Tool implementation
 # ---------------------------------------------------------------------------
+
 
 class ShellTool(Tool):
     @property

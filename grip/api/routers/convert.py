@@ -58,9 +58,7 @@ async def convert_document(
             tmp.write(content)
             tmp_path = Path(tmp.name)
 
-        result = await asyncio.to_thread(
-            convert_file_to_markdown, tmp_path, max_chars=max_chars
-        )
+        result = await asyncio.to_thread(convert_file_to_markdown, tmp_path, max_chars=max_chars)
 
         return {
             "filename": filename,

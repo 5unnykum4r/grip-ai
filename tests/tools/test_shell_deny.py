@@ -17,6 +17,7 @@ from grip.tools.shell import _is_dangerous
 # Layer 1: Blocked base commands
 # ===================================================================
 
+
 class TestBlockedCommands:
     def test_mkfs(self):
         assert _is_dangerous("mkfs /dev/sda1") is not None
@@ -55,6 +56,7 @@ class TestBlockedCommands:
 # ===================================================================
 # Layer 2: rm with parsed flags on critical system paths
 # ===================================================================
+
 
 class TestRmParsed:
     def test_rm_rf_combined(self):
@@ -109,6 +111,7 @@ class TestRmParsed:
 # sudo prefix stripping
 # ===================================================================
 
+
 class TestSudoPrefix:
     def test_sudo_rm_rf(self):
         assert _is_dangerous("sudo rm -rf /") is not None
@@ -126,6 +129,7 @@ class TestSudoPrefix:
 # ===================================================================
 # Command chaining
 # ===================================================================
+
 
 class TestCommandChaining:
     def test_semicolon_chain(self):
@@ -145,6 +149,7 @@ class TestCommandChaining:
 # Full path commands
 # ===================================================================
 
+
 class TestFullPaths:
     def test_full_path_rm(self):
         assert _is_dangerous("/usr/bin/rm -rf /") is not None
@@ -159,6 +164,7 @@ class TestFullPaths:
 # ===================================================================
 # Layer 3: Regex fallback — catastrophic patterns only
 # ===================================================================
+
 
 class TestRegexFallback:
     def test_dd_to_disk(self):
@@ -183,6 +189,7 @@ class TestRegexFallback:
 # ===================================================================
 # Operations that MUST be allowed (previously blocked, now permitted)
 # ===================================================================
+
 
 class TestNowAllowed:
     """These were previously blocked by the old restrictive policy.
@@ -243,6 +250,7 @@ class TestNowAllowed:
 # ===================================================================
 # Safe commands that must NOT be blocked
 # ===================================================================
+
 
 class TestSafeCommands:
     def test_ls(self):

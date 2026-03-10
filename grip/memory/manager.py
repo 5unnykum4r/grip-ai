@@ -37,6 +37,7 @@ class MemoryManager:
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         self._memory_path = self._memory_dir / "MEMORY.md"
         self._history_path = self._memory_dir / "HISTORY.md"
+        self._hybrid: Any = None
 
     @property
     def memory_path(self) -> Path:
@@ -290,6 +291,42 @@ class MemoryManager:
         except OSError:
             pass
 
+    def attach_hybrid_search(self, hybrid: object) -> None:
+        """Attach a HybridSearch instance for enhanced retrieval."""
+        self._hybrid = hybrid
+
+    async def search_history_hybrid(self, query: str, *, max_results: int = 20) -> list[str]:
+        """Search using hybrid FTS5+vector if available, else fall back to TF-IDF."""
+        if self._hybrid is not None:
+            results = await self._hybrid.search(query, max_results=max_results)
+            return [r.text for r in results]
+        return self.search_history(query, max_results=max_results)
+
+    async def search_memory_hybrid(self, query: str, *, max_results: int = 10) -> list[str]:
+        """Search MEMORY.md entries using hybrid search or TF-IDF fallback."""
+        if self._hybrid is not None:
+            results = await self._hybrid.search(query, max_results=max_results)
+            return [r.text for r in results if r.source == "memory"]
+        return self.search_memory(query, max_results=max_results)
+
+    async def append_history_async(self, entry: str) -> None:
+        """Append to HISTORY.md and index into hybrid search if attached."""
+        self.append_history(entry)
+        if self._hybrid is not None:
+            import hashlib
+
+            source_id = f"h_{hashlib.sha256(entry.encode()).hexdigest()[:12]}"
+            await self._hybrid.index(entry, source="history", source_id=source_id)
+
+    async def append_to_memory_async(self, entry: str) -> None:
+        """Append to MEMORY.md and index into hybrid search if attached."""
+        self.append_to_memory(entry)
+        if self._hybrid is not None:
+            import hashlib
+
+            source_id = f"m_{hashlib.sha256(entry.encode()).hexdigest()[:12]}"
+            await self._hybrid.index(entry, source="memory", source_id=source_id)
+
     def needs_consolidation(self, message_count: int, memory_window: int) -> bool:
         """Check if consolidation should run based on message count vs window."""
         return message_count > memory_window * 2
@@ -482,9 +519,7 @@ def _tokenize(text: str) -> list[str]:
     ]
 
 
-def _jaccard_candidates(
-    token_sets: list[set[str]], threshold: float
-) -> dict[int, set[int]]:
+def _jaccard_candidates(token_sets: list[set[str]], threshold: float) -> dict[int, set[int]]:
     """Build candidate pairs for Jaccard comparison using an inverted index.
 
     For Jaccard(A,B) >= threshold, |B| must be in [threshold*|A|, |A|/threshold].

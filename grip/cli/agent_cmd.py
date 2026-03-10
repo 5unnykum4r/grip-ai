@@ -133,9 +133,7 @@ def agent_command(
     from grip.cli.app import state
 
     if not config_exists(state.config_path):
-        console.print(
-            "\n[yellow]No configuration found. Running setup wizard...[/yellow]\n"
-        )
+        console.print("\n[yellow]No configuration found. Running setup wizard...[/yellow]\n")
         from grip.cli.onboard import onboard_command
 
         onboard_command()
@@ -604,7 +602,11 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
                     elif cmd == "/copy":
                         session = session_mgr.get_or_create(session_key)
                         last_assistant = next(
-                            (m.content for m in reversed(session.messages) if m.role == "assistant"),
+                            (
+                                m.content
+                                for m in reversed(session.messages)
+                                if m.role == "assistant"
+                            ),
                             None,
                         )
                         if not last_assistant:
@@ -689,7 +691,9 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
                         table.add_column("Enabled", no_wrap=True)
                         table.add_column("Prompt", style="dim", max_width=40)
                         for j in jobs:
-                            enabled = "[green]Yes[/green]" if j.get("enabled", True) else "[red]No[/red]"
+                            enabled = (
+                                "[green]Yes[/green]" if j.get("enabled", True) else "[red]No[/red]"
+                            )
                             prompt_text = j.get("prompt", "")
                             if len(prompt_text) > 40:
                                 prompt_text = prompt_text[:37] + "..."
@@ -751,7 +755,9 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
                         continue
 
                     else:
-                        console.print(f"[yellow]Unknown command: {cmd}. Type /help for commands.[/yellow]")
+                        console.print(
+                            f"[yellow]Unknown command: {cmd}. Type /help for commands.[/yellow]"
+                        )
                         continue
 
                 # Run the agent

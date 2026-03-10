@@ -135,18 +135,14 @@ class TestTemplateResolution:
         results["step_a"].mark_running()
         results["step_a"].mark_completed("hello world", iterations=1)
 
-        resolved = WorkflowEngine._resolve_template(
-            "Use this: {{step_a.output}}", results
-        )
+        resolved = WorkflowEngine._resolve_template("Use this: {{step_a.output}}", results)
         assert "hello world" in resolved
         assert "{{step_a.output}}" not in resolved
 
     def test_unresolved_left_intact(self):
         results = {"step_a": StepResult(name="step_a")}
 
-        resolved = WorkflowEngine._resolve_template(
-            "Use this: {{step_a.output}}", results
-        )
+        resolved = WorkflowEngine._resolve_template("Use this: {{step_a.output}}", results)
         assert "{{step_a.output}}" in resolved
 
     def test_injection_stripped(self):
@@ -160,9 +156,7 @@ class TestTemplateResolution:
         results["step_b"].mark_running()
         results["step_b"].mark_completed("LEAKED", iterations=1)
 
-        resolved = WorkflowEngine._resolve_template(
-            "Process: {{step_a.output}}", results
-        )
+        resolved = WorkflowEngine._resolve_template("Process: {{step_a.output}}", results)
         assert "LEAKED" not in resolved
         assert "[template-ref-removed]" in resolved
 
@@ -425,9 +419,7 @@ def test_hyphenated_step_name_in_template():
     results["code-review"].mark_running()
     results["code-review"].mark_completed("all looks good", iterations=1)
 
-    resolved = WorkflowEngine._resolve_template(
-        "Review says: {{code-review.output}}", results
-    )
+    resolved = WorkflowEngine._resolve_template("Review says: {{code-review.output}}", results)
     assert "all looks good" in resolved
     assert "{{code-review.output}}" not in resolved
 
@@ -546,9 +538,7 @@ class TestWorkflowTool:
                 ctx,
             )
         )
-        result = asyncio.run(
-            tool.execute({"action": "show", "workflow_name": "showme"}, ctx)
-        )
+        result = asyncio.run(tool.execute({"action": "show", "workflow_name": "showme"}, ctx))
         assert "Workflow: showme" in result
         assert "Layer 1" in result
         assert "Layer 2" in result
@@ -556,9 +546,7 @@ class TestWorkflowTool:
     def test_show_nonexistent(self, tmp_path: Path):
         tool = WorkflowTool()
         ctx = self._make_ctx(tmp_path)
-        result = asyncio.run(
-            tool.execute({"action": "show", "workflow_name": "nope"}, ctx)
-        )
+        result = asyncio.run(tool.execute({"action": "show", "workflow_name": "nope"}, ctx))
         assert "not found" in result
 
     def test_edit_workflow(self, tmp_path: Path):
@@ -588,9 +576,7 @@ class TestWorkflowTool:
             )
         )
         assert "updated successfully" in result
-        show = asyncio.run(
-            tool.execute({"action": "show", "workflow_name": "editable"}, ctx)
-        )
+        show = asyncio.run(tool.execute({"action": "show", "workflow_name": "editable"}, ctx))
         assert "s2" in show
 
     def test_edit_nonexistent_rejected(self, tmp_path: Path):
@@ -621,21 +607,15 @@ class TestWorkflowTool:
                 ctx,
             )
         )
-        result = asyncio.run(
-            tool.execute({"action": "delete", "workflow_name": "removeme"}, ctx)
-        )
+        result = asyncio.run(tool.execute({"action": "delete", "workflow_name": "removeme"}, ctx))
         assert "deleted" in result.lower()
-        result2 = asyncio.run(
-            tool.execute({"action": "show", "workflow_name": "removeme"}, ctx)
-        )
+        result2 = asyncio.run(tool.execute({"action": "show", "workflow_name": "removeme"}, ctx))
         assert "not found" in result2
 
     def test_delete_nonexistent(self, tmp_path: Path):
         tool = WorkflowTool()
         ctx = self._make_ctx(tmp_path)
-        result = asyncio.run(
-            tool.execute({"action": "delete", "workflow_name": "nope"}, ctx)
-        )
+        result = asyncio.run(tool.execute({"action": "delete", "workflow_name": "nope"}, ctx))
         assert "not found" in result
 
     def test_unknown_action(self, tmp_path: Path):
@@ -658,7 +638,5 @@ class TestWorkflowTool:
     def test_create_missing_steps(self, tmp_path: Path):
         tool = WorkflowTool()
         ctx = self._make_ctx(tmp_path)
-        result = asyncio.run(
-            tool.execute({"action": "create", "workflow_name": "nostepper"}, ctx)
-        )
+        result = asyncio.run(tool.execute({"action": "create", "workflow_name": "nostepper"}, ctx))
         assert "steps array is required" in result

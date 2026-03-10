@@ -23,15 +23,34 @@ from loguru import logger
 
 from grip.tools.base import Tool, ToolContext
 
-SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
-    ".pdf", ".docx", ".pptx", ".xlsx", ".xls",
-    ".csv", ".tsv", ".json", ".xml",
-    ".html", ".htm", ".rtf", ".epub",
-    ".md", ".txt",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff",
-    ".wav", ".mp3",
-    ".zip",
-})
+SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".xls",
+        ".csv",
+        ".tsv",
+        ".json",
+        ".xml",
+        ".html",
+        ".htm",
+        ".rtf",
+        ".epub",
+        ".md",
+        ".txt",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".wav",
+        ".mp3",
+        ".zip",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -49,6 +68,7 @@ def _get_markitdown():
     """Lazy-import and cache a single MarkItDown instance."""
     try:
         from markitdown import MarkItDown
+
         return MarkItDown()
     except ImportError:
         raise ImportError(
@@ -119,6 +139,7 @@ def convert_html_to_markdown(
         md = _get_markitdown()
     except ImportError:
         from grip.tools.web import _extract_text
+
         logger.debug("markitdown not installed, falling back to _TextExtractor")
         text = _extract_text(html_content)
         if len(text) > max_chars:
@@ -127,7 +148,9 @@ def convert_html_to_markdown(
 
     tmp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False, encoding="utf-8") as tmp:
+        with tempfile.NamedTemporaryFile(
+            suffix=".html", mode="w", delete=False, encoding="utf-8"
+        ) as tmp:
             tmp.write(html_content)
             tmp_path = Path(tmp.name)
 
@@ -141,6 +164,7 @@ def convert_html_to_markdown(
     except Exception as exc:
         logger.debug("MarkItDown HTML conversion failed, falling back: {}", exc)
         from grip.tools.web import _extract_text
+
         text = _extract_text(html_content)
         if len(text) > max_chars:
             text = text[:max_chars] + f"\n\n[truncated at {max_chars} chars]"
@@ -211,9 +235,7 @@ class ConvertDocumentTool(Tool):
             )
 
         try:
-            result = await asyncio.to_thread(
-                convert_file_to_markdown, path, max_chars=max_chars
-            )
+            result = await asyncio.to_thread(convert_file_to_markdown, path, max_chars=max_chars)
         except ImportError as exc:
             return f"Error: {exc}"
         except Exception as exc:
@@ -221,7 +243,9 @@ class ConvertDocumentTool(Tool):
 
         header = f"## {result.file_name}\n\n"
         if result.truncated:
-            header += f"*Truncated: showing {max_chars:,} of {result.original_size:,} characters*\n\n"
+            header += (
+                f"*Truncated: showing {max_chars:,} of {result.original_size:,} characters*\n\n"
+            )
 
         return header + result.text_content
 

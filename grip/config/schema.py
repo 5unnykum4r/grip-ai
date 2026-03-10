@@ -43,6 +43,45 @@ class PlatformInfo(BaseModel):
     python_version: str = Field(default_factory=_platform.python_version)
 
 
+class SearchConfig(BaseModel):
+    """FTS5 + vector hybrid search configuration for knowledge retrieval."""
+
+    enabled: bool = Field(default=True, description="Enable FTS5 + vector hybrid search.")
+    embedding_model: str = Field(
+        default="openrouter/openai/text-embedding-3-small",
+        description="Model identifier passed to litellm.aembedding(). "
+        "Use provider prefix for routing (e.g. 'openrouter/openai/text-embedding-3-small').",
+    )
+    embedding_dimensions: int = Field(
+        default=1536,
+        ge=64,
+        le=4096,
+        description="Dimensionality of embedding vectors.",
+    )
+    vector_weight: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for vector results in RRF merge.",
+    )
+    bm25_weight: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Weight for BM25 results in RRF merge.",
+    )
+    rrf_k: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        description="Reciprocal Rank Fusion constant.",
+    )
+    auto_reindex: bool = Field(
+        default=True,
+        description="Rebuild index from source files if missing.",
+    )
+
+
 class AgentDefaults(BaseModel):
     """Default agent parameters applied to every agent run unless overridden."""
 
@@ -107,6 +146,7 @@ class AgentDefaults(BaseModel):
         le=86400,
         description="Time-to-live for cached responses in seconds (default: 1 hour).",
     )
+    search: SearchConfig = Field(default_factory=SearchConfig)
     max_daily_tokens: int = Field(
         default=0,
         ge=0,
@@ -371,6 +411,7 @@ class APIConfig(BaseModel):
     @staticmethod
     def _serialize_auth_token(v: SecretStr) -> str:
         return v.get_secret_value()
+
     rate_limit_per_minute_per_ip: int = Field(default=30, ge=1, le=10000)
     cors_allowed_origins: list[str] = Field(default_factory=list)
     max_request_body_bytes: int = Field(default=1_048_576, ge=1024, le=52_428_800)

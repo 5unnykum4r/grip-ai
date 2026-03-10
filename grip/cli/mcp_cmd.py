@@ -94,9 +94,15 @@ def mcp_add(
         None, "--type", help="Transport type: http, sse, or stdio (auto-detected if omitted)"
     ),
     timeout: int = typer.Option(60, "--timeout", help="Connection timeout in seconds"),
-    oauth_client_id: str | None = typer.Option(None, "--oauth-client-id", help="OAuth 2.0 client ID"),
-    oauth_auth_url: str | None = typer.Option(None, "--oauth-auth-url", help="OAuth authorization URL"),
-    oauth_token_url: str | None = typer.Option(None, "--oauth-token-url", help="OAuth token exchange URL"),
+    oauth_client_id: str | None = typer.Option(
+        None, "--oauth-client-id", help="OAuth 2.0 client ID"
+    ),
+    oauth_auth_url: str | None = typer.Option(
+        None, "--oauth-auth-url", help="OAuth authorization URL"
+    ),
+    oauth_token_url: str | None = typer.Option(
+        None, "--oauth-token-url", help="OAuth token exchange URL"
+    ),
     oauth_scopes: str | None = typer.Option(
         None, "--oauth-scopes", help="Comma-separated OAuth scopes"
     ),

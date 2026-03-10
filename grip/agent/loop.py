@@ -142,6 +142,34 @@ class AgentLoop:
         self._trust_manager = trust_manager
         self._kb = knowledge_base
 
+        if config.agents.defaults.search.enabled and self._memory_mgr:
+            from grip.memory.hybrid_search import HybridSearch
+            from grip.providers.registry import ProviderRegistry, _get_api_base, _get_api_key
+
+            search_cfg = config.agents.defaults.search
+            workspace_path = config.agents.defaults.workspace.expanduser().resolve()
+
+            # Resolve embedding API credentials from the provider system.
+            # The embedding model string uses the same prefix routing as chat models
+            # (e.g. "openrouter/openai/text-embedding-3-small").
+            emb_spec, _ = ProviderRegistry.resolve_model(search_cfg.embedding_model)
+            emb_api_key = _get_api_key(emb_spec, config.providers)
+            emb_api_base = _get_api_base(emb_spec, config.providers)
+
+            self._hybrid_search = HybridSearch(
+                workspace_path=workspace_path,
+                embedding_model=search_cfg.embedding_model,
+                embedding_dimensions=search_cfg.embedding_dimensions,
+                vector_weight=search_cfg.vector_weight,
+                bm25_weight=search_cfg.bm25_weight,
+                rrf_k=search_cfg.rrf_k,
+                api_key=emb_api_key,
+                api_base=emb_api_base,
+            )
+            self._memory_mgr.attach_hybrid_search(self._hybrid_search)
+        else:
+            self._hybrid_search = None
+
         # Phase 2 compat: manual tool definitions + executor
         self._tool_definitions: list[dict[str, Any]] = []
         self._tool_executor: ToolExecutor | None = None
@@ -208,7 +236,9 @@ class AgentLoop:
             effective_model = model
         elif self._config.agents.model_tiers.enabled:
             tiers_cfg = self._config.agents.model_tiers
-            session_tool_count = sum(len(m.tool_calls) for m in (session_messages or []) if m.tool_calls)
+            session_tool_count = sum(
+                len(m.tool_calls) for m in (session_messages or []) if m.tool_calls
+            )
             complexity = classify_complexity(
                 user_message,
                 tool_calls_in_session=session_tool_count,
@@ -276,7 +306,7 @@ class AgentLoop:
         # based on the current query. Injects targeted historical knowledge
         # without loading the entire memory into context.
         if self._memory_mgr:
-            relevant_context = self._retrieve_relevant_context(user_message)
+            relevant_context = await self._retrieve_relevant_context(user_message)
             if relevant_context:
                 messages.append(
                     LLMMessage(
@@ -465,7 +495,8 @@ class AgentLoop:
                 len(m.tool_calls) for m in (session_messages or []) if m.tool_calls
             )
             complexity = classify_complexity(
-                user_message, tool_calls_in_session=session_tool_count,
+                user_message,
+                tool_calls_in_session=session_tool_count,
             )
             effective_model = select_model(
                 defaults.model,
@@ -504,7 +535,8 @@ class AgentLoop:
 
         tool_defs = self._get_tool_definitions()
         system_msg = self._context_builder.build_system_message(
-            user_message=user_message, session_key=session_key,
+            user_message=user_message,
+            session_key=session_key,
         )
         messages: list[LLMMessage] = [system_msg]
 
@@ -512,7 +544,7 @@ class AgentLoop:
             messages.append(LLMMessage(role="system", content=session_summary))
 
         if self._memory_mgr:
-            relevant_context = self._retrieve_relevant_context(user_message)
+            relevant_context = await self._retrieve_relevant_context(user_message)
             if relevant_context:
                 messages.append(LLMMessage(role="system", content=relevant_context))
 
@@ -538,8 +570,11 @@ class AgentLoop:
 
             # Non-streaming call to check for tool calls
             response = await self._call_llm(
-                messages, tools=tools, model=effective_model,
-                temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+                messages,
+                tools=tools,
+                model=effective_model,
+                temperature=defaults.temperature,
+                max_tokens=defaults.max_tokens,
             )
             total_prompt_tokens += response.usage.prompt_tokens
             total_completion_tokens += response.usage.completion_tokens
@@ -548,8 +583,11 @@ class AgentLoop:
                 # Final response — re-call with streaming for token-by-token output
                 final_parts: list[str] = []
                 async for delta in self._provider.chat_stream(
-                    messages, model=effective_model, tools=tools,
-                    temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+                    messages,
+                    model=effective_model,
+                    tools=tools,
+                    temperature=defaults.temperature,
+                    max_tokens=defaults.max_tokens,
                 ):
                     if delta.content:
                         yield StreamEvent(type="token", text=delta.content)
@@ -577,7 +615,9 @@ class AgentLoop:
 
             # Tool iteration — execute tools and emit progress events
             messages.append(
-                LLMMessage(role="assistant", content=response.content, tool_calls=response.tool_calls)
+                LLMMessage(
+                    role="assistant", content=response.content, tool_calls=response.tool_calls
+                )
             )
 
             for tc in response.tool_calls:
@@ -592,15 +632,16 @@ class AgentLoop:
                 scrubbed_output = _scrub_secrets(exec_result.output)
                 messages.append(
                     LLMMessage(
-                        role="tool", content=scrubbed_output,
-                        tool_call_id=exec_result.tool_call_id, name=exec_result.tool_name,
+                        role="tool",
+                        content=scrubbed_output,
+                        tool_call_id=exec_result.tool_call_id,
+                        name=exec_result.tool_name,
                     )
                 )
                 yield StreamEvent(type="tool_end", tool_name=exec_result.tool_name)
 
             failed_tools = [
-                f"{er.tool_name}: {er.output[:200]}"
-                for er in exec_results if not er.success
+                f"{er.tool_name}: {er.output[:200]}" for er in exec_results if not er.success
             ]
             if failed_tools and defaults.enable_self_correction:
                 failure_summary = "; ".join(failed_tools)
@@ -616,7 +657,9 @@ class AgentLoop:
                 )
 
         # Exhausted max iterations — force a final text response via streaming
-        logger.warning("Agent hit max iterations ({}), generating forced response (stream)", max_iter)
+        logger.warning(
+            "Agent hit max iterations ({}), generating forced response (stream)", max_iter
+        )
         exhaust_msg = (
             "I've reached my maximum number of tool iterations for this request. "
             "Here's what I've done so far based on the tool results above."
@@ -625,8 +668,11 @@ class AgentLoop:
 
         final_parts = []
         async for delta in self._provider.chat_stream(
-            messages, model=effective_model, tools=None,
-            temperature=defaults.temperature, max_tokens=defaults.max_tokens,
+            messages,
+            model=effective_model,
+            tools=None,
+            temperature=defaults.temperature,
+            max_tokens=defaults.max_tokens,
         ):
             if delta.content:
                 yield StreamEvent(type="token", text=delta.content)
@@ -635,7 +681,10 @@ class AgentLoop:
                 total_prompt_tokens += delta.usage.prompt_tokens
                 total_completion_tokens += delta.usage.completion_tokens
 
-        final_text = "".join(final_parts) or "I was unable to complete the request within the iteration limit."
+        final_text = (
+            "".join(final_parts)
+            or "I was unable to complete the request within the iteration limit."
+        )
         self._persist_session(session, user_message, final_text)
         if session:
             await self._maybe_consolidate(session)
@@ -778,9 +827,7 @@ class AgentLoop:
             len(to_keep),
         )
 
-        history_text = "\n".join(
-            f"[{m.role}]: {(m.content or '')[:500]}" for m in to_summarize
-        )
+        history_text = "\n".join(f"[{m.role}]: {(m.content or '')[:500]}" for m in to_summarize)
 
         consolidation_model = self._config.agents.defaults.consolidation_model or model
         summary_prompt = [
@@ -821,31 +868,26 @@ class AgentLoop:
 
     # ── Infinite context: relevance-scored retrieval ──
 
-    def _retrieve_relevant_context(self, query: str) -> str:
-        """Retrieve relevant facts from long-term memory for the current query.
+    async def _retrieve_relevant_context(self, query: str) -> str:
+        """Retrieve relevant facts from long-term memory.
 
-        Searches both MEMORY.md (structured facts) and HISTORY.md (conversation
-        log) using keyword-weighted TF-IDF scoring. Returns a compact context
-        block with the most relevant hits, or empty string if nothing matches.
+        Uses hybrid FTS5+vector search when available, falls back to TF-IDF.
         """
         if not self._memory_mgr:
             return ""
 
         parts: list[str] = []
 
-        # Search structured facts in MEMORY.md
-        memory_hits = self._memory_mgr.search_memory(query, max_results=5)
+        memory_hits = await self._memory_mgr.search_memory_hybrid(query, max_results=5)
         if memory_hits:
             facts_block = "\n".join(f"- {hit}" for hit in memory_hits)
             parts.append(f"[Relevant facts from long-term memory]\n{facts_block}")
 
-        # Search conversation history in HISTORY.md
-        history_hits = self._memory_mgr.search_history(query, max_results=5)
+        history_hits = await self._memory_mgr.search_history_hybrid(query, max_results=5)
         if history_hits:
             history_block = "\n".join(f"- {hit}" for hit in history_hits)
             parts.append(f"[Relevant past conversations]\n{history_block}")
 
-        # Search learned patterns from KnowledgeBase (max 3 entries)
         if self._kb:
             try:
                 kb_hits = self._kb.search(query, max_results=3)

@@ -262,9 +262,11 @@ async def _handle_mcp_oauth_login(server_name: str, server_url: str) -> bool:
         return False
 
     code_verifier = secrets.token_urlsafe(64)
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
     params: dict[str, str] = {
         "client_id": client_info.client_id,
@@ -300,14 +302,11 @@ async def _handle_mcp_oauth_login(server_name: str, server_url: str) -> bool:
 
     try:
         async with httpx.AsyncClient(timeout=30) as http_client:
-            response = await http_client.post(
-                str(oauth_metadata.token_endpoint), data=token_data
-            )
+            response = await http_client.post(str(oauth_metadata.token_endpoint), data=token_data)
 
         if response.status_code not in (200, 201):
             console.print(
-                f"[red]Token exchange failed ({response.status_code}): "
-                f"{response.text[:200]}[/red]"
+                f"[red]Token exchange failed ({response.status_code}): {response.text[:200]}[/red]"
             )
             return False
 

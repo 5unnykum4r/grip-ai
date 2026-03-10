@@ -18,6 +18,8 @@ from typing import Any
 
 from loguru import logger
 
+from grip.utils.text import sanitize_unicode
+
 try:
     from pydantic import BaseModel as PydanticBaseModel
 except ImportError:
@@ -34,14 +36,17 @@ def _serialize_result(result: ToolResult) -> str:
     Strings pass through unchanged. Pydantic BaseModel instances are
     serialized to indented JSON. Dicts/lists are serialized via json.dumps.
     Anything else is converted via str().
+
+    All string outputs are sanitized to strip lone surrogates that
+    can corrupt JSON transcripts or cause API errors.
     """
     if isinstance(result, str):
-        return result
+        return sanitize_unicode(result)
     if PydanticBaseModel is not None and isinstance(result, PydanticBaseModel):
         return result.model_dump_json(indent=2)
     if isinstance(result, (dict, list)):
         return json.dumps(result, indent=2, default=str)
-    return str(result)
+    return sanitize_unicode(str(result))
 
 
 @dataclass(slots=True)

@@ -73,7 +73,9 @@ class DirectSender:
         return None
 
     def _resolve_route(
-        self, session_key: str, context: str = "",
+        self,
+        session_key: str,
+        context: str = "",
     ) -> tuple[str, str, str] | None:
         """Resolve session_key to (channel, chat_id, token), or None on failure."""
         channel, chat_id = _parse_session_key(session_key)
@@ -139,13 +141,13 @@ class DirectSender:
             try:
                 resp = await self._client.post(url, json={"chat_id": chat_id, "text": chunk})
                 if resp.status_code != 200:
-                    logger.error("Telegram sendMessage failed ({}): {}", resp.status_code, resp.text)
+                    logger.error(
+                        "Telegram sendMessage failed ({}): {}", resp.status_code, resp.text
+                    )
             except httpx.HTTPError as exc:
                 logger.error("Telegram sendMessage error: {}", exc)
 
-    async def _send_telegram_file(
-        self, token: str, chat_id: str, path: Path, caption: str
-    ) -> None:
+    async def _send_telegram_file(self, token: str, chat_id: str, path: Path, caption: str) -> None:
         image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         is_image = path.suffix.lower() in image_exts
         endpoint = "sendPhoto" if is_image else "sendDocument"
@@ -160,7 +162,9 @@ class DirectSender:
                     data["caption"] = caption[:1024]
                 resp = await self._client.post(url, data=data, files=files)
                 if resp.status_code != 200:
-                    logger.error("Telegram {} failed ({}): {}", endpoint, resp.status_code, resp.text)
+                    logger.error(
+                        "Telegram {} failed ({}): {}", endpoint, resp.status_code, resp.text
+                    )
         except (httpx.HTTPError, OSError) as exc:
             logger.error("Telegram {} error: {}", endpoint, exc)
 
@@ -178,9 +182,7 @@ class DirectSender:
             except httpx.HTTPError as exc:
                 logger.error("Discord send error: {}", exc)
 
-    async def _send_discord_file(
-        self, token: str, chat_id: str, path: Path, caption: str
-    ) -> None:
+    async def _send_discord_file(self, token: str, chat_id: str, path: Path, caption: str) -> None:
         url = f"{DISCORD_API}/channels/{chat_id}/messages"
         headers = {"Authorization": f"Bot {token}"}
         try:
@@ -215,9 +217,7 @@ class DirectSender:
             except httpx.HTTPError as exc:
                 logger.error("Slack send error: {}", exc)
 
-    async def _send_slack_file(
-        self, token: str, chat_id: str, path: Path, caption: str
-    ) -> None:
+    async def _send_slack_file(self, token: str, chat_id: str, path: Path, caption: str) -> None:
         url = f"{SLACK_API}/files.uploadV2"
         headers = {"Authorization": f"Bearer {token}"}
         try:
@@ -264,8 +264,7 @@ def wire_direct_sender(engine: Any, channels_config: ChannelsConfig) -> DirectSe
     (caller should close it on shutdown) or None if no channels are enabled.
     """
     has_any_token = any(
-        getattr(channels_config, ch).is_active()
-        for ch in ChannelsConfig.CHANNEL_NAMES
+        getattr(channels_config, ch).is_active() for ch in ChannelsConfig.CHANNEL_NAMES
     )
     if not has_any_token:
         return None

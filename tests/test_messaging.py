@@ -318,7 +318,10 @@ class TestWireDirectSender:
         msg_tool = MessageTool()
         file_tool = SendFileTool()
         registry = MagicMock()
-        registry.get.side_effect = lambda name: {"send_message": msg_tool, "send_file": file_tool}.get(name)
+        registry.get.side_effect = lambda name: {
+            "send_message": msg_tool,
+            "send_file": file_tool,
+        }.get(name)
         runner = MagicMock(spec=LiteLLMRunner)
         runner.registry = registry
         del runner._inner

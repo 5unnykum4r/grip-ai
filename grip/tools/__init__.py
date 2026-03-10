@@ -55,6 +55,18 @@ def create_default_registry(
     registry.register_many(create_filesystem_tools())
     registry.register_many(create_shell_tools())
     registry.register_many(create_web_tools())
+
+    try:
+        import playwright  # noqa: F401
+
+        from grip.tools.browser import create_browser_tools
+
+        registry.register_many(create_browser_tools())
+    except ImportError:
+        logger.debug(
+            "Playwright not installed — browser tool disabled. Install with: uv sync --extra browser"
+        )
+
     registry.register_many(create_message_tools(message_callback))
     registry.register_many(create_spawn_tools(subagent_manager))
     registry.register_many(create_finance_tools())

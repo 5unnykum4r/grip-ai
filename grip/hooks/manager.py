@@ -136,14 +136,16 @@ class HooksManager:
             if st.st_uid != os.getuid():
                 logger.warning(
                     "Skipping hook {} — not owned by current user (uid {})",
-                    path, os.getuid(),
+                    path,
+                    os.getuid(),
                 )
                 return 0
             # Reject hooks writable by group or others
             if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
                 logger.warning(
                     "Skipping hook {} — writable by group/others (mode {:o})",
-                    path, st.st_mode,
+                    path,
+                    st.st_mode,
                 )
                 return 0
 

@@ -136,40 +136,32 @@ class MCPConnection:
             return []
 
     async def _ensure_oauth_token(self) -> None:
-        """Load OAuth token from store, refresh if expired, inject into headers."""
+        """Load OAuth token from store, auto-refresh if expired, inject into headers.
+
+        Uses TokenStore.get_valid() which transparently handles refresh
+        when the token is expired or about to expire (within 5 min window).
+        """
         from grip.security.token_store import TokenStore
 
         store = TokenStore()
-        token = store.get(self.server_name)
+        token = await store.get_valid(self.server_name, oauth_config=self._config.oauth)
 
         if token is None:
             self._connected = False
             self._error = "OAuth login required"
             logger.warning(
-                "MCP '{}' requires OAuth login (no token found). "
-                "Run: grip mcp login {}",
+                "MCP '{}' requires OAuth login (no token found). Run: grip mcp login {}",
                 self.server_name,
                 self.server_name,
             )
             return
 
-        if token.is_expired and token.refresh_token:
-            try:
-                from grip.security.oauth import OAuthFlow
-
-                flow = OAuthFlow(self._config.oauth, self.server_name)
-                token = await flow.refresh(token.refresh_token)
-                store.save(self.server_name, token)
-                logger.info("Refreshed OAuth token for MCP '{}'", self.server_name)
-            except Exception as exc:
-                self._connected = False
-                self._error = f"Token refresh failed: {exc}"
-                logger.error("Failed to refresh OAuth token for '{}': {}", self.server_name, exc)
-                return
-        elif token.is_expired:
+        if token.is_expired:
             self._connected = False
-            self._error = "OAuth token expired (no refresh token)"
-            logger.warning("OAuth token expired for MCP '{}' with no refresh token", self.server_name)
+            self._error = "OAuth token expired and refresh failed or no refresh token available"
+            logger.warning(
+                "OAuth token for MCP '{}' is expired and could not be refreshed", self.server_name
+            )
             return
 
         self._config.headers["Authorization"] = f"Bearer {token.access_token}"
@@ -289,11 +281,7 @@ class MCPConnection:
         if not has_token:
             return None
 
-        callback_port = (
-            self._config.oauth.redirect_port
-            if self._config.oauth
-            else 18801
-        )
+        callback_port = self._config.oauth.redirect_port if self._config.oauth else 18801
         return create_mcp_oauth_auth(
             server_name=self.server_name,
             server_url=self._config.url,

@@ -92,10 +92,7 @@ async def list_mcp_servers(
     config: GripConfig = Depends(get_config),  # noqa: B008
 ) -> MCPServersListResponse:
     """List all configured MCP servers with their status."""
-    servers = [
-        _build_server_status(name, srv)
-        for name, srv in config.tools.mcp_servers.items()
-    ]
+    servers = [_build_server_status(name, srv) for name, srv in config.tools.mcp_servers.items()]
     return MCPServersListResponse(servers=servers, total=len(servers))
 
 
@@ -170,9 +167,11 @@ def _initiate_explicit_oauth(
 
     state_token = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
     if not hasattr(request.app.state, "oauth_pending"):
         request.app.state.oauth_pending = {}
@@ -208,7 +207,10 @@ def _initiate_explicit_oauth(
 
 
 async def _initiate_mcp_gateway_oauth(
-    server: str, srv: Any, request: Request, config: GripConfig,
+    server: str,
+    srv: Any,
+    request: Request,
+    config: GripConfig,
 ) -> OAuthLoginResponse:
     """Perform MCP OAuth discovery on the gateway and return an auth_url.
 
@@ -225,14 +227,14 @@ async def _initiate_mcp_gateway_oauth(
     redirect_uri = f"http://{gateway_host}:{gateway_port}/api/v1/mcp/callback"
 
     logger.info("Starting gateway-mediated MCP OAuth for '{}'", server)
-    oauth_metadata, client_info = await discover_mcp_oauth_metadata(
-        server, srv.url, redirect_uri
-    )
+    oauth_metadata, client_info = await discover_mcp_oauth_metadata(server, srv.url, redirect_uri)
 
     code_verifier = secrets.token_urlsafe(64)
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
     state_token = secrets.token_urlsafe(32)
 
     if not hasattr(request.app.state, "oauth_pending"):
@@ -280,10 +282,7 @@ async def oauth_callback(
     """
     if error:
         safe_error = html_mod.escape(error)
-        error_html = (
-            "<html><body><h1>Login Failed</h1>"
-            f"<p>Error: {safe_error}</p></body></html>"
-        )
+        error_html = f"<html><body><h1>Login Failed</h1><p>Error: {safe_error}</p></body></html>"
         return HTMLResponse(content=error_html, status_code=400)
 
     if not state or not code:
@@ -323,7 +322,9 @@ async def oauth_callback(
             response = await client.post(flow_data["token_url"], data=token_data)
 
         if response.status_code not in (200, 201):
-            logger.error("OAuth token exchange failed: {} {}", response.status_code, response.text[:200])
+            logger.error(
+                "OAuth token exchange failed: {} {}", response.status_code, response.text[:200]
+            )
             return HTMLResponse(
                 content="<html><body><h1>Login Failed</h1><p>Token exchange failed.</p></body></html>",
                 status_code=500,

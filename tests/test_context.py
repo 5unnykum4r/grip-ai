@@ -235,9 +235,7 @@ class TestTokenSavings:
 
         # Identity files (~6KB expanded AGENT.md) + skill listing (~3KB for ~30 skills) + metadata (~200 bytes)
         # Total should be under 15KB
-        assert prompt_len < 15000, (
-            f"System prompt is {prompt_len} chars — expected under 15000"
-        )
+        assert prompt_len < 15000, f"System prompt is {prompt_len} chars — expected under 15000"
 
     def test_build_system_message_signature_simplified(self, builder: ContextBuilder):
         """Ensure old parameters (tool_definitions, tool_registry, skill_names) are gone."""

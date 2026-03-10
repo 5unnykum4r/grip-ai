@@ -191,11 +191,23 @@ def generate_tools_md(
 
 
 _SDK_CUSTOM_TOOLS: list[tuple[str, str, str]] = [
-    ("send_message", "text, session_key", "Send a text message to the user via the configured channel."),
-    ("send_file", "file_path, caption, session_key", "Send a file to the user via the configured channel."),
+    (
+        "send_message",
+        "text, session_key",
+        "Send a text message to the user via the configured channel.",
+    ),
+    (
+        "send_file",
+        "file_path, caption, session_key",
+        "Send a file to the user via the configured channel.",
+    ),
     ("remember", "fact, category", "Store a fact in long-term memory for future recall."),
     ("recall", "query_text", "Search long-term memory for facts matching the query."),
-    ("stock_quote", "symbol", "Fetch the current stock price for a ticker symbol. (requires yfinance)"),
+    (
+        "stock_quote",
+        "symbol",
+        "Fetch the current stock price for a ticker symbol. (requires yfinance)",
+    ),
 ]
 
 

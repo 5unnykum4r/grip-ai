@@ -47,9 +47,7 @@ def gateway_command(
     from grip.cli.app import state
 
     if not config_exists(state.config_path):
-        console.print(
-            "\n[yellow]No configuration found. Running setup wizard...[/yellow]\n"
-        )
+        console.print("\n[yellow]No configuration found. Running setup wizard...[/yellow]\n")
         from grip.cli.onboard import onboard_command
 
         onboard_command()
@@ -103,8 +101,11 @@ async def _run_gateway(
     # .run() on it, which EngineProtocol satisfies.
     cron_svc = CronService(ws.root / "cron", engine, config.cron, bus=bus)
     heartbeat_svc = HeartbeatService(
-        ws.root, engine, config.heartbeat,
-        bus=bus, reply_to=config.heartbeat.reply_to,
+        ws.root,
+        engine,
+        config.heartbeat,
+        bus=bus,
+        reply_to=config.heartbeat.reply_to,
     )
 
     if config.heartbeat.enabled and config.heartbeat.interval_minutes < 10:

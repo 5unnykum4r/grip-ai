@@ -140,9 +140,7 @@ class TestCreateMCPOAuthAuth:
         assert isinstance(auth, OAuthClientProvider)
 
     def test_custom_callback_port(self):
-        auth = create_mcp_oauth_auth(
-            "test", "https://mcp.example.com", callback_port=19999
-        )
+        auth = create_mcp_oauth_auth("test", "https://mcp.example.com", callback_port=19999)
         assert auth is not None
 
     def test_returns_none_when_mcp_auth_missing(self):

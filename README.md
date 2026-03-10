@@ -16,13 +16,14 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/engine-Claude%20Agent%20SDK-blueviolet" alt="Claude Agent SDK">
-  <img src="https://img.shields.io/badge/tests-769-brightgreen" alt="769 Tests">
+  <img src="https://img.shields.io/badge/tests-826-brightgreen" alt="826 Tests">
+  <img src="https://img.shields.io/badge/tools-31-blue" alt="31 Tools">
   <img src="https://img.shields.io/badge/providers-15-orange" alt="15 LLM Providers">
 </p>
 
 ---
 
-grip is a self-hostable AI agent platform — 117 Python modules, ~21,800 lines, 769 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, track multi-step tasks, schedule cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
+grip is a self-hostable AI agent platform — 120+ Python modules, ~24,000 lines, 826 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, automate with a headless browser, track multi-step tasks, schedule reliable cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
 
 ## Features
 
@@ -30,15 +31,16 @@ grip is a self-hostable AI agent platform — 117 Python modules, ~21,800 lines,
 |----------|---------|
 | **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM fallback for non-Claude models |
 | **LLM Providers** | Anthropic (via SDK), OpenRouter, OpenAI, DeepSeek, Groq, Google Gemini, Qwen, MiniMax, Moonshot (Kimi), Ollama (Cloud), Ollama (Local), vLLM, Llama.cpp, LM Studio, and any OpenAI-compatible API |
-| **Built-in Tools** | 30 tools across 15 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, document conversion (MarkItDown — PDF/DOCX/PPTX/XLSX/HTML/images), code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (stock quotes, history, company info via yfinance), cron scheduling, workflows, MCP tools |
+| **Built-in Tools** | 31 tools across 16 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, **browser automation (Playwright — navigate, click, fill, screenshot, evaluate JS, extract content)**, document conversion (MarkItDown — PDF/DOCX/PPTX/XLSX/HTML/images), code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (stock quotes, history, company info via yfinance), cron scheduling, workflows, MCP tools |
 | **Task Tracking** | `todo_write`/`todo_read` tools with workspace persistence — active tasks injected into every system prompt so the agent never loses track across iterations |
 | **Chat Channels** | Telegram (bot commands, photos, documents with auto-conversion, voice), Discord (attachments with auto-conversion), Slack (Socket Mode, file shares with auto-conversion) |
 | **REST API** | FastAPI with bearer auth, rate limiting, audit logging, security headers, 28 endpoints |
 | **Workflows** | DAG-based multi-agent orchestration with dependency resolution and parallel execution |
-| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with TF-IDF retrieval, auto-consolidation, mid-run compaction, semantic caching, and knowledge base |
-| **Scheduling** | Cron jobs with channel delivery, heartbeat service, natural language scheduling |
+| **Memory** | Dual-layer (MEMORY.md + HISTORY.md) with **hybrid search** (FTS5 BM25 + vector embeddings merged via Reciprocal Rank Fusion), TF-IDF fallback, auto-consolidation, mid-run compaction, semantic caching, and knowledge base |
+| **Scheduling** | Cron jobs with state machine (pending→fired→running→succeeded/failed), idempotency keys, deferred retry queue, channel delivery, heartbeat service, natural language scheduling |
 | **Skills** | 15 built-in markdown skills, workspace overrides, install/remove via CLI |
-| **Security** | Directory trust model, shell deny-list (50+ patterns), credential scrubbing, SecretStr config fields, secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
+| **Security** | Directory trust model, shell deny-list (50+ patterns), credential scrubbing, Unicode sanitization (lone surrogate stripping), SecretStr config fields, secret sanitizer, Shield runtime threat feed policy, token tracking, rate limiting |
+| **OAuth** | Auto-refresh with 5-minute proactive window, concurrent refresh protection, per-server token isolation, PKCE authorization code flow |
 | **Observability** | OpenTelemetry tracing, in-memory metrics, crash recovery, config validation |
 
 ## Architecture
@@ -60,10 +62,11 @@ grip gateway
 ├── Engine (pluggable)
 │   ├── SDKRunner (claude_sdk)         Claude Agent SDK — full agentic loop
 │   └── LiteLLMRunner (litellm)        any model via LiteLLM + grip's AgentLoop
-├── Tool Registry                      30 tools across 17 modules
+├── Tool Registry                      31 tools across 18 modules
 │   ├── filesystem                     read/write/edit/append/list/delete/trash
 │   ├── shell                          exec with 50+ pattern deny-list
 │   ├── web                            web_search + web_fetch (HTML→markdown)
+│   ├── browser                        Playwright headless Chromium (navigate/click/fill/screenshot/evaluate/content)
 │   ├── research                       deep web_research (HTML→markdown)
 │   ├── markitdown                     convert_document (PDF/DOCX/XLSX/images/…)
 │   ├── message                        send_message + send_file
@@ -77,10 +80,12 @@ grip gateway
 ├── Memory
 │   ├── MEMORY.md                      durable facts (TF-IDF search, Jaccard dedup)
 │   ├── HISTORY.md                     timestamped summaries (time-decay search)
+│   ├── HybridSearch                   FTS5 BM25 + vector cosine, merged via RRF
+│   ├── brain.db                       SQLite FTS5 index + vector embeddings
 │   ├── SemanticCache                  SHA-256 keyed response cache with TTL
 │   └── KnowledgeBase                  structured typed facts
 ├── Session Manager                    per-key JSON files, LRU cache (200)
-├── Cron Service                       croniter schedules, channel delivery
+├── Cron Service                       state machine, idempotency, deferred retry, channel delivery
 ├── Heartbeat Service                  periodic autonomous agent wake-up
 └── Workflow Engine                    DAG execution with topological parallelism
 ```
@@ -133,6 +138,7 @@ uv sync --extra discord      # Discord bot
 uv sync --extra slack        # Slack bot (Socket Mode)
 uv sync --extra mcp          # Model Context Protocol
 uv sync --extra document     # Document conversion (MarkItDown — PDF/DOCX/XLSX/images)
+uv sync --extra browser      # Browser automation (Playwright — headless Chromium)
 uv sync --extra viz          # Data visualization (plotext)
 uv sync --extra observe      # OpenTelemetry tracing
 uv sync --extra all          # Everything above
@@ -159,7 +165,9 @@ The wizard walks you through:
 - Choosing your engine: **Claude Agent SDK** (recommended) or LiteLLM (15+ providers)
 - Entering your API key
 - Choosing a default model
-- Initializing the workspace (`~/.grip/workspace/`)
+- Configuring hybrid search (embedding model for semantic memory retrieval)
+- Optional Telegram bot setup
+- File access mode (workspace-only, prompt, or trust-all)
 - Testing connectivity
 
 ### 2. Chat with the Agent
@@ -333,6 +341,7 @@ grip config set agents.defaults.max_tool_iterations 50
 | Section | Description |
 |---------|-------------|
 | `agents.defaults` | Engine (`claude_sdk`/`litellm`), SDK model, default model, max_tokens, temperature, memory_window, max_tool_iterations (0=unlimited), workspace path |
+| `agents.defaults.search` | Hybrid search: embedding_model, embedding_dimensions, vector_weight, bm25_weight, rrf_k, auto_reindex |
 | `agents.profiles` | Named agent configs (model, tools_allowed, tools_denied, system_prompt_file) |
 | `agents.model_tiers` | Cost-aware routing: different models for low/medium/high complexity prompts |
 | `providers` | Per-provider API keys and base URLs |
@@ -514,6 +523,15 @@ grip cron remove <job-id>
 ```
 
 When chatting via Telegram/Discord/Slack, the agent automatically sets `--reply-to` so cron results are delivered to your chat.
+
+### Scheduler Reliability
+
+The cron service uses a state machine to track job lifecycle and prevent common scheduling pitfalls:
+
+- **State machine**: Each job transitions through `pending → fired → running → succeeded/failed` — `last_run` is set AFTER execution, not before, so a job can't appear "done" when it never ran
+- **Idempotency keys**: Jobs are deduplicated by content hash (name + schedule + prompt). Creating the same logical job twice returns the existing one instead of accumulating duplicates
+- **Deferred retry queue**: If a job fires while the engine is busy, it enters a retry queue instead of being silently dropped. Retried on the next cycle with a 10-minute max age
+- **Graceful shutdown**: The service waits for in-flight jobs to complete before stopping
 
 ## <a id="api-reference"></a>API Reference
 
@@ -700,6 +718,39 @@ grip config set agents.defaults.consolidation_model "openrouter/google/gemini-fl
 
 The agent creates a `tasks.json` in the workspace at the start of any multi-step task. If a session is interrupted or compacted, the task list is re-injected into the system prompt at the next iteration, so the agent picks up exactly where it left off.
 
+## Browser Automation
+
+grip includes a built-in Playwright-powered browser tool that gives the agent full headless Chromium control — handling JavaScript-rendered SPAs, login flows, and dynamic content that `web_fetch` can't reach.
+
+### Setup
+
+```bash
+# Install the browser extra
+uv sync --extra browser
+
+# Install Chromium (one-time)
+playwright install chromium
+```
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| `navigate` | Go to a URL, returns page title and HTTP status |
+| `click` | Click an element by CSS selector |
+| `fill` | Type text into an input field |
+| `select` | Pick an option from `<select>` dropdowns by value or visible label |
+| `press` | Press a keyboard key (`Enter`, `Escape`, `Tab`, etc.), optionally on a focused element |
+| `scroll` | Scroll the page up or down by pixel amount (default 500px) |
+| `screenshot` | Capture the page — save to file or return base64 |
+| `content` | Extract rendered text from `<main>`, `<article>`, or `<body>` |
+| `evaluate` | Run arbitrary JavaScript and return the result |
+| `wait` | Wait for a CSS selector to become visible |
+| `back` | Navigate back in browser history |
+| `close` | Close the browser session |
+
+Chromium is auto-installed on first use if the binary is missing. The browser session is reused across calls — the agent can navigate, interact, and extract data across multiple tool invocations without re-launching Chromium each time.
+
 ## Docker
 
 Grip is Docker-ready and can be configured entirely via environment variables.
@@ -765,7 +816,7 @@ uv sync --group dev
 # Run linter
 uv run ruff check grip/ tests/
 
-# Run tests (769 tests across 50+ test files)
+# Run tests (826 tests across 50+ test files)
 uv run pytest
 
 # Run tests with coverage
@@ -782,10 +833,10 @@ uv build
 
 | Metric | Count |
 |--------|-------|
-| Python source files | 117 |
-| Lines of code | ~21,800 |
-| Tests | 769 |
-| Built-in tools | 30 (15 modules) |
+| Python source files | 120+ |
+| Lines of code | ~24,000 |
+| Tests | 826 |
+| Built-in tools | 31 (16 modules) |
 | Built-in skills | 15 |
 | LLM providers | 15 |
 | API endpoints | 28 |

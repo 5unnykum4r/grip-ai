@@ -87,8 +87,11 @@ class LiteLLMProvider(LLMProvider):
         import litellm
 
         kwargs, resolved_model = self._build_kwargs(
-            messages, model=model, tools=tools,
-            temperature=temperature, max_tokens=max_tokens,
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
         tool_count = len(tools) if tools else 0
@@ -250,8 +253,11 @@ class LiteLLMProvider(LLMProvider):
         import litellm
 
         kwargs, resolved_model = self._build_kwargs(
-            messages, model=model, tools=tools,
-            temperature=temperature, max_tokens=max_tokens,
+            messages,
+            model=model,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
@@ -259,7 +265,9 @@ class LiteLLMProvider(LLMProvider):
         tool_count = len(tools) if tools else 0
         logger.info(
             "LiteLLM stream call: model={}, messages={}, tools={}",
-            resolved_model, len(messages), tool_count,
+            resolved_model,
+            len(messages),
+            tool_count,
         )
 
         try:

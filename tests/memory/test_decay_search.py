@@ -160,9 +160,7 @@ class TestMemoryCompaction:
         memory_mgr.write_memory("\n".join(entries) + "\n")
         memory_mgr.compact_memory(similarity_threshold=threshold)
         actual_lines = [
-            line.strip()
-            for line in memory_mgr.read_memory().splitlines()
-            if line.strip()
+            line.strip() for line in memory_mgr.read_memory().splitlines() if line.strip()
         ]
 
         assert actual_lines == expected

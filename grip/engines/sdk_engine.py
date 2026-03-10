@@ -157,7 +157,10 @@ class SDKRunner(EngineProtocol):
     # -- System prompt assembly --
 
     def _build_system_prompt(
-        self, user_message: str, session_key: str, custom_tools: list | None = None,
+        self,
+        user_message: str,
+        session_key: str,
+        custom_tools: list | None = None,
     ) -> str:
         """Assemble the system prompt from identity files, memory, skills, and metadata.
 
@@ -192,7 +195,8 @@ class SDKRunner(EngineProtocol):
         # List custom tools so the agent knows what it can call
         if custom_tools:
             tool_lines = [
-                f"- **{t.name}**: {t.description}" for t in custom_tools
+                f"- **{t.name}**: {t.description}"
+                for t in custom_tools
                 if hasattr(t, "name") and hasattr(t, "description")
             ]
             if tool_lines:
@@ -276,7 +280,9 @@ class SDKRunner(EngineProtocol):
             if inspect.iscoroutinefunction(cb):
                 result = await cb(args["session_key"], args["file_path"], args["caption"])
             else:
-                result = await asyncio.to_thread(cb, args["session_key"], args["file_path"], args["caption"])
+                result = await asyncio.to_thread(
+                    cb, args["session_key"], args["file_path"], args["caption"]
+                )
             return runner._text_result(str(result) if result is not None else "File sent.")
 
         @tool(
@@ -352,9 +358,7 @@ class SDKRunner(EngineProtocol):
         # Wrap custom tools in an in-process MCP server (the SDK expects
         # ClaudeAgentOptions.tools to be a list of built-in tool name strings,
         # NOT SdkMcpTool objects).
-        grip_server = create_sdk_mcp_server(
-            "grip_tools", version="1.0.0", tools=custom_tools
-        )
+        grip_server = create_sdk_mcp_server("grip_tools", version="1.0.0", tools=custom_tools)
         mcp_servers: dict[str, Any] = {srv["name"]: srv for srv in mcp_config}
         mcp_servers["grip_tools"] = grip_server
 
@@ -450,9 +454,7 @@ class SDKRunner(EngineProtocol):
         allowed_tools = list(self._allowed_tools_base)
         effective_model = model or self._model
 
-        grip_server = create_sdk_mcp_server(
-            "grip_tools", version="1.0.0", tools=custom_tools
-        )
+        grip_server = create_sdk_mcp_server("grip_tools", version="1.0.0", tools=custom_tools)
         mcp_servers: dict[str, Any] = {srv["name"]: srv for srv in mcp_config}
         mcp_servers["grip_tools"] = grip_server
 

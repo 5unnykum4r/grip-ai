@@ -125,9 +125,7 @@ class TestLoadMcpJson:
                 "supabase": {
                     "type": "http",
                     "url": "https://mcp.supabase.com/mcp",
-                    "headers": {
-                        "Authorization": "Bearer test_token_123"
-                    },
+                    "headers": {"Authorization": "Bearer test_token_123"},
                 }
             }
         }

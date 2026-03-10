@@ -126,14 +126,24 @@ class DiscordChannel(BaseChannel):
                             result = await asyncio.to_thread(
                                 convert_file_to_markdown, tmp_path, max_chars=50_000
                             )
-                            content += f"\n\n[Document: {attachment.filename}]\n\n{result.text_content}"
-                            logger.debug("Discord: converted attachment {} ({} chars)", attachment.filename, result.original_size)
+                            content += (
+                                f"\n\n[Document: {attachment.filename}]\n\n{result.text_content}"
+                            )
+                            logger.debug(
+                                "Discord: converted attachment {} ({} chars)",
+                                attachment.filename,
+                                result.original_size,
+                            )
                         else:
                             content += f"\n\n[User sent file: {attachment.filename}]"
                     except ImportError:
                         content += f"\n\n[User sent file: {attachment.filename}]"
                     except Exception as exc:
-                        logger.debug("Discord attachment conversion failed for {}: {}", attachment.filename, exc)
+                        logger.debug(
+                            "Discord attachment conversion failed for {}: {}",
+                            attachment.filename,
+                            exc,
+                        )
                         content += f"\n\n[User sent file: {attachment.filename}]"
                     finally:
                         if tmp_path is not None:

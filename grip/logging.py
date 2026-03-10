@@ -18,7 +18,9 @@ from loguru import logger
 
 _console_sink_id: int | None = None
 _console_level: str = "INFO"
-_CONSOLE_FORMAT = "<level>{level:<8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - {message}"
+_CONSOLE_FORMAT = (
+    "<level>{level:<8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - {message}"
+)
 _INTERACTIVE_FORMAT = "\n" + _CONSOLE_FORMAT
 
 

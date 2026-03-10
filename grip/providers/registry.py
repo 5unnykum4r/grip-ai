@@ -60,7 +60,13 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="Anthropic",
         api_base="https://api.anthropic.com/v1",
         api_key_env="ANTHROPIC_API_KEY",
-        default_models=["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
+        default_models=[
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-opus-4-5",
+            "claude-sonnet-4-5",
+        ],
         model_prefix="anthropic/",
     ),
     ProviderSpec(

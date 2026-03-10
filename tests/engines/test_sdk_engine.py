@@ -246,9 +246,7 @@ def _find_tool(tools: list, name: str):
         tool_name = getattr(t, "name", None) or getattr(t, "_tool_name", None)
         if tool_name == name:
             return t
-    raise KeyError(
-        f"Tool '{name}' not found in {[getattr(t, 'name', '?') for t in tools]}"
-    )
+    raise KeyError(f"Tool '{name}' not found in {[getattr(t, 'name', '?') for t in tools]}")
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +310,9 @@ class TestSDKRunnerConstructor:
         self, config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "env-key-67890"}):
-            runner = _build_runner(config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr)
+            runner = _build_runner(
+                config_no_api_key, mock_workspace, mock_session_mgr, mock_memory_mgr
+            )
             assert runner._api_key == "env-key-67890"
 
     def test_stores_trust_manager(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
@@ -478,9 +478,7 @@ class TestBuildMCPConfig:
 
 
 class TestCollectAllowedTools:
-    def test_empty_when_no_servers(
-        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
-    ):
+    def test_empty_when_no_servers(self, config, mock_workspace, mock_session_mgr, mock_memory_mgr):
         runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
         assert runner._collect_allowed_tools() == []
 
@@ -520,7 +518,12 @@ class TestCollectAllowedTools:
                 "restrict_to_workspace": True,
                 "mcp_servers": {
                     "active": {"command": "npx", "args": [], "allowed_tools": ["mcp__active__*"]},
-                    "off": {"command": "npx", "args": [], "allowed_tools": ["mcp__off__*"], "enabled": False},
+                    "off": {
+                        "command": "npx",
+                        "args": [],
+                        "allowed_tools": ["mcp__off__*"],
+                        "enabled": False,
+                    },
                 },
             },
         )
@@ -895,11 +898,13 @@ class TestSDKRunnerEffort:
         self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
         config = GripConfig(
-            agents={"defaults": {
-                "workspace": str(tmp_workspace),
-                "semantic_cache_enabled": False,
-                "sdk_effort": "medium",
-            }},
+            agents={
+                "defaults": {
+                    "workspace": str(tmp_workspace),
+                    "semantic_cache_enabled": False,
+                    "sdk_effort": "medium",
+                }
+            },
             tools={"restrict_to_workspace": True},
             providers={"anthropic": {"api_key": "test-key-12345"}},
         )
@@ -922,10 +927,12 @@ class TestSDKRunnerEffort:
         self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
     ):
         config = GripConfig(
-            agents={"defaults": {
-                "workspace": str(tmp_workspace),
-                "semantic_cache_enabled": False,
-            }},
+            agents={
+                "defaults": {
+                    "workspace": str(tmp_workspace),
+                    "semantic_cache_enabled": False,
+                }
+            },
             tools={"restrict_to_workspace": True},
             providers={"anthropic": {"api_key": "test-key-12345"}},
         )

@@ -49,7 +49,11 @@ class TestChatStreamTextContent:
         chunks = [
             _chunk(content="Hello"),
             _chunk(content=" world"),
-            _chunk(content="!", finish_reason="stop", usage={"prompt_tokens": 10, "completion_tokens": 3}),
+            _chunk(
+                content="!",
+                finish_reason="stop",
+                usage={"prompt_tokens": 10, "completion_tokens": 3},
+            ),
         ]
 
         with patch("litellm.acompletion", new_callable=AsyncMock, return_value=_async_iter(chunks)):
@@ -131,7 +135,11 @@ class TestChatStreamUsage:
         provider = _make_provider()
         chunks = [
             _chunk(content="Hi"),
-            _chunk(content="!", finish_reason="stop", usage={"prompt_tokens": 7, "completion_tokens": 2}),
+            _chunk(
+                content="!",
+                finish_reason="stop",
+                usage={"prompt_tokens": 7, "completion_tokens": 2},
+            ),
         ]
 
         with patch("litellm.acompletion", new_callable=AsyncMock, return_value=_async_iter(chunks)):

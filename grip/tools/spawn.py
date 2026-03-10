@@ -46,7 +46,8 @@ class SubagentManager:
     def _prune_completed(self) -> None:
         """Evict oldest completed/failed/cancelled agents beyond the retention limit."""
         done = [
-            aid for aid, info in self._agents.items()
+            aid
+            for aid, info in self._agents.items()
             if info.status in ("completed", "failed", "cancelled")
         ]
         excess = len(done) - _MAX_COMPLETED_AGENTS

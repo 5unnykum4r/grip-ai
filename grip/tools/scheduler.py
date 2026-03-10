@@ -141,8 +141,7 @@ def _migrate_individual_files(cron_dir: Path) -> None:
     CronJob-compatible format. Already-migrated files are skipped.
     """
     individual_files = [
-        f for f in cron_dir.glob("*.json")
-        if f.name != "jobs.json" and not f.name.endswith(".tmp")
+        f for f in cron_dir.glob("*.json") if f.name != "jobs.json" and not f.name.endswith(".tmp")
     ]
     if not individual_files:
         return

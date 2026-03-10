@@ -75,7 +75,8 @@ class WorkflowEngine:
 
         for layer_idx, layer_names in enumerate(layers, 1):
             runnable = [
-                name for name in layer_names
+                name
+                for name in layer_names
                 if result.step_results[name].status != StepStatus.SKIPPED
             ]
             if not runnable:

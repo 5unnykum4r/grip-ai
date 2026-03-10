@@ -159,7 +159,9 @@ async def _wait_for_oauth_callback(
 
     Returns (authorization_code, state_or_none) extracted from the callback URL.
     """
-    result_future: asyncio.Future[tuple[str, str | None]] = asyncio.get_running_loop().create_future()
+    result_future: asyncio.Future[tuple[str, str | None]] = (
+        asyncio.get_running_loop().create_future()
+    )
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -177,7 +179,9 @@ async def _wait_for_oauth_callback(
 
             error = params.get("error", [None])[0]
             if error:
-                _send_response(writer, 400, _CALLBACK_ERROR_HTML.format(error=html_mod.escape(error)))
+                _send_response(
+                    writer, 400, _CALLBACK_ERROR_HTML.format(error=html_mod.escape(error))
+                )
                 if not result_future.done():
                     result_future.set_exception(RuntimeError(f"OAuth error: {error}"))
                 return
@@ -188,7 +192,9 @@ async def _wait_for_oauth_callback(
             if expected_state is not None and state != expected_state:
                 _send_response(writer, 400, _CALLBACK_ERROR_HTML.format(error="State mismatch"))
                 if not result_future.done():
-                    result_future.set_exception(RuntimeError("OAuth state mismatch (possible CSRF)"))
+                    result_future.set_exception(
+                        RuntimeError("OAuth state mismatch (possible CSRF)")
+                    )
                 return
 
             if not code:
@@ -281,7 +287,9 @@ async def discover_mcp_oauth_metadata(
                 break
 
         # Step 4: Extract auth server URL from PRM
-        auth_server_url = str(prm.authorization_servers[0]) if prm and prm.authorization_servers else None
+        auth_server_url = (
+            str(prm.authorization_servers[0]) if prm and prm.authorization_servers else None
+        )
 
         # Step 5: Discover OAuth Authorization Server Metadata (RFC 8414)
         oauth_metadata = None
@@ -296,9 +304,7 @@ async def discover_mcp_oauth_metadata(
                 break
 
         if oauth_metadata is None:
-            raise RuntimeError(
-                f"Could not discover OAuth metadata for {server_url}"
-            )
+            raise RuntimeError(f"Could not discover OAuth metadata for {server_url}")
 
         # Step 6: Select scopes
         scopes = get_client_metadata_scopes(www_auth_scope, prm, oauth_metadata)

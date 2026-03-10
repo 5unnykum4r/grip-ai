@@ -212,9 +212,7 @@ def workflow_edit(
         raise typer.Exit(1)
 
     path = store.save(wf)
-    console.print(
-        f"[green]Workflow '{wf.name}' updated[/green] ({len(wf.steps)} steps) -> {path}"
-    )
+    console.print(f"[green]Workflow '{wf.name}' updated[/green] ({len(wf.steps)} steps) -> {path}")
 
 
 @workflow_app.command(name="delete")

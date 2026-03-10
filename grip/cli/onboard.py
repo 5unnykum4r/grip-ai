@@ -22,6 +22,7 @@ from grip.config.schema import (
     ChannelEntry,
     ChannelsConfig,
     ProviderEntry,
+    SearchConfig,
     ToolsConfig,
 )
 from grip.providers.registry import ProviderRegistry, create_provider
@@ -241,11 +242,101 @@ def _auto_test_connection(config: GripConfig, full_model: str) -> bool:
             logger.enable("litellm")
 
 
+def _auto_pull_ollama_embedding(model_name: str = "nomic-embed-text") -> None:
+    """Offer to pull an Ollama embedding model during onboarding."""
+    import subprocess
+
+    pull = inquirer.confirm(
+        message=f"Pull {model_name} now?",
+        default=True,
+    ).execute()
+    if not pull:
+        console.print(
+            f"  [dim]Skipped. Run manually before first use:[/dim]\n"
+            f"    [cyan]ollama pull {model_name}[/cyan]"
+        )
+        return
+
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"[cyan]Pulling {model_name}...", total=None)
+        try:
+            result = subprocess.run(
+                ["ollama", "pull", model_name],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0:
+                progress.update(task, description=f"[green]✓ {model_name} ready!", completed=True)
+            else:
+                progress.update(task, description="[red]✗ Pull failed", completed=True)
+                console.print(f"  [dim]{result.stderr.strip()}[/dim]")
+                console.print(f"  [dim]Run manually: ollama pull {model_name}[/dim]")
+        except FileNotFoundError:
+            progress.update(task, description="[red]✗ Ollama not found", completed=True)
+            console.print("  [dim]Install Ollama first: https://ollama.com[/dim]")
+        except subprocess.TimeoutExpired:
+            progress.update(task, description="[red]✗ Pull timed out", completed=True)
+            console.print(f"  [dim]Run manually: ollama pull {model_name}[/dim]")
+
+
 _SDK_MODELS = [
-    "claude-sonnet-4-6",
     "claude-opus-4-6",
-    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
 ]
+
+# Providers that have a native embedding endpoint.
+# Maps provider name → (default litellm model string, dimensions).
+_EMBEDDING_MODELS: dict[str, tuple[str, int]] = {
+    "openrouter": ("openrouter/openai/text-embedding-3-small", 1536),
+    "openai": ("openai/text-embedding-3-small", 1536),
+    "ollama": ("ollama/nomic-embed-text", 768),
+    "ollama_cloud": ("ollama_cloud/nomic-embed-text", 768),
+}
+
+# Available embedding model choices per provider (model_id, dims, label).
+_EMBEDDING_CHOICES: dict[str, list[tuple[str, int, str]]] = {
+    "openrouter": [
+        (
+            "openrouter/openai/text-embedding-3-small",
+            1536,
+            "text-embedding-3-small — best value ($0.02/1M tokens)",
+        ),
+        (
+            "openrouter/openai/text-embedding-3-large",
+            3072,
+            "text-embedding-3-large — highest quality ($0.13/1M tokens)",
+        ),
+    ],
+    "openai": [
+        (
+            "openai/text-embedding-3-small",
+            1536,
+            "text-embedding-3-small — best value ($0.02/1M tokens)",
+        ),
+        (
+            "openai/text-embedding-3-large",
+            3072,
+            "text-embedding-3-large — highest quality ($0.13/1M tokens)",
+        ),
+    ],
+    "ollama": [
+        ("ollama/nomic-embed-text", 768, "nomic-embed-text — 768 dims (free, local)"),
+        ("ollama/mxbai-embed-large", 1024, "mxbai-embed-large — 1024 dims (free, local)"),
+        ("ollama/all-minilm", 384, "all-minilm — 384 dims, fastest (free, local)"),
+    ],
+    "ollama_cloud": [
+        ("ollama_cloud/nomic-embed-text", 768, "nomic-embed-text — 768 dims"),
+        ("ollama_cloud/mxbai-embed-large", 1024, "mxbai-embed-large — 1024 dims"),
+    ],
+}
 
 
 def _auto_test_sdk_connection(api_key: str, model: str) -> bool:
@@ -391,14 +482,14 @@ def _run_onboard_wizard() -> bool:
     selected_spec = None
 
     console.print()
-    _print_step(1, 6, "Choose your LLM provider")
+    _print_step(1, 7, "Choose your LLM provider")
     provider_name, is_custom = _select_provider()
 
     if provider_name == "_claude_sdk":
         # ── Claude Agent SDK path ──────────────────────────────────────
         use_sdk = True
 
-        _print_step(2, 6, "Configure API key")
+        _print_step(2, 7, "Configure API key")
         console.print(
             Panel(
                 "Enter your [bold cyan]Anthropic[/bold cyan] API key\n"
@@ -417,10 +508,10 @@ def _run_onboard_wizard() -> bool:
                 continue
             break
 
-        _print_step(3, 6, "Choose a Claude model")
-        sdk_model_choices = [Choice(value=m, name=m) for m in _SDK_MODELS]
-        sdk_model = inquirer.fuzzy(  # type: ignore[attr-defined]
-            message="Search or select Claude model:",
+        _print_step(3, 7, "Choose a Claude model")
+        sdk_model_choices = [Choice(value=m, name=f"  {m}") for m in _SDK_MODELS]
+        sdk_model = inquirer.select(
+            message="Select Claude model:",
             choices=sdk_model_choices,
             default="claude-sonnet-4-6",
             pointer=">",
@@ -487,7 +578,7 @@ def _run_onboard_wizard() -> bool:
             selected_spec = ProviderRegistry.get_spec("openrouter")
             provider_name = "openrouter"
 
-        _print_step(2, 6, "Configure API key & Endpoint")
+        _print_step(2, 7, "Configure API key & Endpoint")
         api_key = ""
         api_base = selected_spec.api_base if selected_spec else ""
 
@@ -526,7 +617,7 @@ def _run_onboard_wizard() -> bool:
             if custom_base.strip():
                 api_base = custom_base.strip()
 
-        _print_step(3, 6, "Choose a default model")
+        _print_step(3, 7, "Choose a default model")
 
         if selected_spec and selected_spec.default_models:
             model_choices = [Choice(value=m, name=m) for m in selected_spec.default_models]
@@ -575,8 +666,147 @@ def _run_onboard_wizard() -> bool:
             )
         )
 
-    # ── Step 4: Telegram ───────────────────────────────────────────────
-    _print_step(4, 6, "Connect Telegram bot")
+    # Build providers_dict early so the embedding step can check existing keys.
+    providers_dict: dict[str, ProviderEntry] = {}
+
+    # ── Step 4: Embedding model for hybrid search ────────────────────
+    _print_step(4, 7, "Configure memory search")
+
+    # Determine which provider will serve embeddings.
+    # If the user's chat provider has a known embedding model, use it.
+    # Otherwise offer OpenRouter (most common) or BM25-only.
+    emb_provider = provider_name if not use_sdk else "anthropic"
+    search_cfg = SearchConfig()  # defaults
+    extra_emb_provider: tuple[str, ProviderEntry] | None = None
+
+    if emb_provider in _EMBEDDING_MODELS:
+        is_ollama_provider = emb_provider in ("ollama", "ollama_cloud")
+
+        if is_ollama_provider:
+            cost_line = "Cost: [green]Free (runs locally)[/green]"
+        else:
+            cost_line = "Cost: ~$0.02 per 1M tokens (very cheap)"
+
+        console.print(
+            Panel(
+                f"Hybrid search uses a small embedding model for semantic matching.\n"
+                f"Your provider ({emb_provider}) supports embeddings natively.\n\n"
+                f"  {cost_line}",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        use_hybrid = inquirer.confirm(
+            message="Enable hybrid search (BM25 + vector)?",
+            default=True,
+        ).execute()
+        if use_hybrid:
+            # Let the user pick an embedding model if there are choices
+            choices = _EMBEDDING_CHOICES.get(emb_provider, [])
+            if len(choices) > 1:
+                emb_model_choices = [
+                    Choice(value=(model_id, dims), name=f"  {label}")
+                    for model_id, dims, label in choices
+                ]
+                selected_emb = inquirer.select(
+                    message="Choose embedding model:",
+                    choices=emb_model_choices,
+                    default=emb_model_choices[0].value,
+                    pointer=">",
+                ).execute()
+                chosen_model, chosen_dims = selected_emb
+            else:
+                chosen_model, chosen_dims = _EMBEDDING_MODELS[emb_provider]
+
+            if is_ollama_provider:
+                # Extract bare model name for the pull command
+                pull_model = chosen_model.split("/", 1)[-1] if "/" in chosen_model else chosen_model
+                _auto_pull_ollama_embedding(pull_model)
+
+            search_cfg = SearchConfig(
+                enabled=True,
+                embedding_model=chosen_model,
+                embedding_dimensions=chosen_dims,
+            )
+            console.print(f"  [bold green]✓ Hybrid search enabled ({chosen_model})[/bold green]")
+        else:
+            search_cfg = SearchConfig(enabled=False)
+            console.print("  [dim]Using keyword search only (BM25)[/dim]")
+    else:
+        # Provider has no embedding endpoint (Anthropic, DeepSeek, Groq, etc.)
+        console.print(
+            Panel(
+                f"Hybrid search uses a small embedding model for semantic matching.\n"
+                f"Your chat provider ({emb_provider}) doesn't have an embedding endpoint.\n\n"
+                "Options:\n"
+                "  1. Use [cyan]OpenRouter[/cyan] for embeddings (needs API key, ~$0.02/1M tokens)\n"
+                "  2. Use keyword search only (BM25, no API key needed)",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        emb_choice = inquirer.select(
+            message="Choose search mode:",
+            choices=[
+                Choice(value="openrouter", name="  OpenRouter embeddings (recommended)"),
+                Choice(value="bm25_only", name="  Keyword search only (no extra key)"),
+            ],
+            default="openrouter",
+            pointer=">",
+        ).execute()
+
+        if emb_choice == "openrouter":
+            # Check if the user already has an OpenRouter key in providers_dict
+            existing_or_key = ""
+            if "openrouter" in providers_dict:
+                existing_or_key = providers_dict["openrouter"].api_key.get_secret_value()
+
+            if existing_or_key:
+                console.print("  [dim]Using your existing OpenRouter API key for embeddings.[/dim]")
+            else:
+                console.print("\n  [dim]Get a key at: https://openrouter.ai/keys[/dim]")
+                while True:
+                    emb_api_key = inquirer.secret(
+                        message="OpenRouter API key for embeddings:",
+                        default="",
+                    ).execute()
+                    if not emb_api_key.strip():
+                        console.print("[red]API key is required for embeddings.[/red]")
+                        continue
+                    break
+                extra_emb_provider = (
+                    "openrouter",
+                    ProviderEntry(api_key=emb_api_key.strip()),
+                )
+
+            # Let user choose embedding model
+            or_choices = _EMBEDDING_CHOICES["openrouter"]
+            emb_model_choices = [
+                Choice(value=(model_id, dims), name=f"  {label}")
+                for model_id, dims, label in or_choices
+            ]
+            selected_emb = inquirer.select(
+                message="Choose embedding model:",
+                choices=emb_model_choices,
+                default=emb_model_choices[0].value,
+                pointer=">",
+            ).execute()
+            chosen_model, chosen_dims = selected_emb
+
+            search_cfg = SearchConfig(
+                enabled=True,
+                embedding_model=chosen_model,
+                embedding_dimensions=chosen_dims,
+            )
+            console.print(
+                f"  [bold green]✓ Hybrid search enabled via OpenRouter ({chosen_model})[/bold green]"
+            )
+        else:
+            search_cfg = SearchConfig(enabled=False)
+            console.print("  [dim]Using keyword search only (BM25)[/dim]")
+
+    # ── Step 5: Telegram ───────────────────────────────────────────────
+    _print_step(5, 7, "Connect Telegram bot")
     console.print(
         Panel(
             "Chat with your AI agent directly from Telegram\n\n"
@@ -638,7 +868,7 @@ def _run_onboard_wizard() -> bool:
         console.print("    [cyan]grip config set channels.telegram.enabled true[/cyan]")
 
     # ── Step 5: File access mode ───────────────────────────────────────
-    _print_step(5, 6, "Configure file access mode")
+    _print_step(6, 7, "Configure file access mode")
 
     access_mode = inquirer.select(
         message="Choose file access mode:",
@@ -668,13 +898,16 @@ def _run_onboard_wizard() -> bool:
         trust_mode=trust_mode,
     )
 
-    # ── Step 6: Save config & workspace ────────────────────────────────
-    _print_step(6, 6, "Setting up workspace & saving config")
+    # ── Step 7: Save config & workspace ────────────────────────────────
+    _print_step(7, 7, "Setting up workspace & saving config")
 
-    providers_dict: dict[str, ProviderEntry] = {}
+    # Add the extra embedding provider entry if one was collected in step 4
+    if extra_emb_provider is not None:
+        emb_prov_name, emb_prov_entry = extra_emb_provider
+        if emb_prov_name not in providers_dict:
+            providers_dict[emb_prov_name] = emb_prov_entry
 
     if use_sdk:
-        # Claude Agent SDK configuration
         providers_dict["anthropic"] = ProviderEntry(api_key=api_key)
         config = GripConfig(
             agents=AgentsConfig(
@@ -683,6 +916,7 @@ def _run_onboard_wizard() -> bool:
                     model=sdk_model,
                     sdk_model=sdk_model,
                     provider="anthropic",
+                    search=search_cfg,
                 ),
             ),
             providers=providers_dict,
@@ -690,7 +924,6 @@ def _run_onboard_wizard() -> bool:
             tools=tools_config,
         )
     else:
-        # LiteLLM configuration (existing behavior)
         local_providers = ["ollama", "llamacpp", "lmstudio"]
         is_local = provider_name in local_providers
 
@@ -714,6 +947,7 @@ def _run_onboard_wizard() -> bool:
                     engine="litellm",
                     model=full_model,
                     provider=provider_name,
+                    search=search_cfg,
                 ),
             ),
             providers=providers_dict,

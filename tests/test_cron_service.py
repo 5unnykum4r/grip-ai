@@ -175,8 +175,11 @@ class TestHeartbeatDelivery:
         (tmp_path / "HEARTBEAT.md").write_text("Check system health", encoding="utf-8")
 
         svc = HeartbeatService(
-            tmp_path, engine, hb_config,
-            bus=bus, reply_to=hb_config.reply_to,
+            tmp_path,
+            engine,
+            hb_config,
+            bus=bus,
+            reply_to=hb_config.reply_to,
         )
         await svc._beat()
 
@@ -210,8 +213,11 @@ class TestHeartbeatDelivery:
         (tmp_path / "HEARTBEAT.md").write_text("Run checks", encoding="utf-8")
 
         svc = HeartbeatService(
-            tmp_path, engine, hb_config,
-            bus=bus, reply_to=hb_config.reply_to,
+            tmp_path,
+            engine,
+            hb_config,
+            bus=bus,
+            reply_to=hb_config.reply_to,
         )
         await svc._beat()
 

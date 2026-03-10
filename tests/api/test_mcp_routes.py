@@ -168,7 +168,9 @@ class TestToggleServerConfig:
         assert restored.tools.mcp_servers["test"].enabled is True
 
 
-def _make_httpx_response(status_code: int, json_data: dict | None = None, headers: dict | None = None) -> httpx.Response:
+def _make_httpx_response(
+    status_code: int, json_data: dict | None = None, headers: dict | None = None
+) -> httpx.Response:
     """Build a real httpx.Response for use in tests."""
     resp = httpx.Response(
         status_code=status_code,
@@ -198,30 +200,40 @@ class TestDiscoverMCPOAuthMetadata:
         )
 
         # Protected Resource Metadata response
-        resp_prm = _make_httpx_response(200, json_data={
-            "resource": "https://mcp.example.com/mcp",
-            "authorization_servers": ["https://auth.example.com"],
-            "scopes_supported": ["mcp:read", "mcp:write"],
-        })
+        resp_prm = _make_httpx_response(
+            200,
+            json_data={
+                "resource": "https://mcp.example.com/mcp",
+                "authorization_servers": ["https://auth.example.com"],
+                "scopes_supported": ["mcp:read", "mcp:write"],
+            },
+        )
 
         # OAuth Authorization Server Metadata response
-        resp_oauth_meta = _make_httpx_response(200, json_data={
-            "issuer": "https://auth.example.com",
-            "authorization_endpoint": "https://auth.example.com/authorize",
-            "token_endpoint": "https://auth.example.com/token",
-            "registration_endpoint": "https://auth.example.com/register",
-            "response_types_supported": ["code"],
-            "scopes_supported": ["mcp:read", "mcp:write"],
-        })
+        resp_oauth_meta = _make_httpx_response(
+            200,
+            json_data={
+                "issuer": "https://auth.example.com",
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "registration_endpoint": "https://auth.example.com/register",
+                "response_types_supported": ["code"],
+                "scopes_supported": ["mcp:read", "mcp:write"],
+            },
+        )
 
         # Dynamic client registration response
-        resp_registration = _make_httpx_response(200, json_data={
-            "client_id": "registered_client_id",
-            "client_secret": "registered_secret",
-            "redirect_uris": [redirect_uri],
-        })
+        resp_registration = _make_httpx_response(
+            200,
+            json_data={
+                "client_id": "registered_client_id",
+                "client_secret": "registered_secret",
+                "redirect_uris": [redirect_uri],
+            },
+        )
 
         call_count = 0
+
         async def mock_get(url, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -296,19 +308,26 @@ class TestDiscoverMCPOAuthMetadata:
                 ),
             },
         )
-        resp_prm = _make_httpx_response(200, json_data={
-            "resource": "https://mcp.example.com/mcp",
-            "authorization_servers": ["https://auth.example.com"],
-        })
-        resp_oauth_meta = _make_httpx_response(200, json_data={
-            "issuer": "https://auth.example.com",
-            "authorization_endpoint": "https://auth.example.com/authorize",
-            "token_endpoint": "https://auth.example.com/token",
-            "registration_endpoint": "https://auth.example.com/register",
-            "response_types_supported": ["code"],
-        })
+        resp_prm = _make_httpx_response(
+            200,
+            json_data={
+                "resource": "https://mcp.example.com/mcp",
+                "authorization_servers": ["https://auth.example.com"],
+            },
+        )
+        resp_oauth_meta = _make_httpx_response(
+            200,
+            json_data={
+                "issuer": "https://auth.example.com",
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "registration_endpoint": "https://auth.example.com/register",
+                "response_types_supported": ["code"],
+            },
+        )
 
         call_count = 0
+
         async def mock_get(url, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -319,6 +338,7 @@ class TestDiscoverMCPOAuthMetadata:
             return resp_oauth_meta
 
         send_called = False
+
         async def mock_send(request, **kwargs):
             nonlocal send_called
             send_called = True

@@ -326,6 +326,25 @@ class TestToolsConfigEnableToolSearch:
         assert config.tools.enable_tool_search == "auto:15"
 
 
+class TestSearchConfig:
+    def test_search_defaults(self):
+        cfg = GripConfig()
+        assert cfg.agents.defaults.search.enabled is True
+        assert (
+            cfg.agents.defaults.search.embedding_model == "openrouter/openai/text-embedding-3-small"
+        )
+        assert cfg.agents.defaults.search.vector_weight == 0.6
+        assert cfg.agents.defaults.search.bm25_weight == 0.4
+        assert cfg.agents.defaults.search.rrf_k == 60
+        assert cfg.agents.defaults.search.auto_reindex is True
+
+    def test_search_config_from_dict(self):
+        cfg = GripConfig(agents={"defaults": {"search": {"enabled": False, "vector_weight": 0.8}}})
+        assert cfg.agents.defaults.search.enabled is False
+        assert cfg.agents.defaults.search.vector_weight == 0.8
+        assert cfg.agents.defaults.search.bm25_weight == 0.4
+
+
 class TestSdkEffortConfig:
     def test_default_is_none(self):
         defaults = AgentDefaults()

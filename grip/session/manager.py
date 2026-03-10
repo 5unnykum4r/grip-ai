@@ -17,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from grip.providers.types import LLMMessage, ToolCall
+from grip.utils.text import sanitize_unicode
 
 
 @dataclass(slots=True)
@@ -65,16 +66,25 @@ def _sanitize_key(key: str) -> str:
 
 
 def _message_to_dict(msg: LLMMessage) -> dict[str, Any]:
-    """Serialize an LLMMessage to a JSON-safe dict."""
+    """Serialize an LLMMessage to a JSON-safe dict.
+
+    Sanitizes all string content to remove lone surrogates and
+    other characters that would corrupt the JSON transcript or
+    cause HTTP 400 errors on subsequent API calls.
+    """
     d: dict[str, Any] = {"role": msg.role}
     if msg.content is not None:
-        d["content"] = msg.content
+        d["content"] = (
+            sanitize_unicode(msg.content) if isinstance(msg.content, str) else msg.content
+        )
     if msg.tool_calls:
         d["tool_calls"] = [
             {
                 "id": tc.id,
                 "function_name": tc.function_name,
-                "arguments": tc.arguments,
+                "arguments": sanitize_unicode(tc.arguments)
+                if isinstance(tc.arguments, str)
+                else tc.arguments,
             }
             for tc in msg.tool_calls
         ]

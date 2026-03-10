@@ -1,4 +1,4 @@
-"""Secure OAuth token storage for MCP servers.
+"""Secure OAuth token storage for MCP servers with automatic refresh.
 
 Tokens are stored in ~/.grip/tokens.json, separate from config.json to
 prevent accidental leakage in config dumps or log output. File permissions
@@ -6,10 +6,15 @@ are set to 0o600 (owner read/write only) on creation.
 
 Uses atomic writes (temp file + rename) following the same pattern as
 grip.config.loader.save_config().
+
+Auto-refresh: get_valid() checks expiration and transparently refreshes
+using the stored refresh_token before returning, so callers always get
+a usable access_token without manual intervention.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -36,9 +41,23 @@ class StoredToken(BaseModel):
             return False
         return time.time() >= (self.expires_at - 30)
 
+    @property
+    def expires_in_seconds(self) -> float:
+        """Seconds until expiration. Negative means already expired."""
+        if self.expires_at <= 0:
+            return float("inf")
+        return self.expires_at - time.time()
+
+    @property
+    def needs_proactive_refresh(self) -> bool:
+        """True if token expires within 5 minutes (proactive refresh window)."""
+        if self.expires_at <= 0:
+            return False
+        return self.expires_in_seconds < 300
+
 
 class TokenStore:
-    """File-backed OAuth token store.
+    """File-backed OAuth token store with automatic refresh support.
 
     Reads and writes ~/.grip/tokens.json with atomic writes
     and restrictive file permissions (0o600).
@@ -46,6 +65,7 @@ class TokenStore:
 
     def __init__(self, tokens_path: Path | None = None) -> None:
         self._path = tokens_path or Path("~/.grip/tokens.json").expanduser()
+        self._refresh_locks: dict[str, asyncio.Lock] = {}
 
     def get(self, server_name: str) -> StoredToken | None:
         """Retrieve stored token for a server, or None if not found."""
@@ -54,6 +74,64 @@ class TokenStore:
         if raw is None:
             return None
         return StoredToken(**raw)
+
+    async def get_valid(
+        self,
+        server_name: str,
+        oauth_config: object | None = None,
+    ) -> StoredToken | None:
+        """Retrieve a valid (non-expired) token, auto-refreshing if needed.
+
+        If the token is expired or about to expire and a refresh_token
+        is available, this transparently performs the refresh, persists
+        the new token, and returns it. Callers always receive a usable
+        token or None.
+
+        Args:
+            server_name: MCP server name.
+            oauth_config: OAuthConfig instance needed for refresh endpoint.
+                          If None and token needs refresh, returns the
+                          expired token as-is (caller must handle).
+        """
+        token = self.get(server_name)
+        if token is None:
+            return None
+
+        if not token.needs_proactive_refresh:
+            return token
+
+        if not token.refresh_token:
+            logger.warning(
+                "Token for '{}' expires in {:.0f}s but has no refresh_token",
+                server_name,
+                token.expires_in_seconds,
+            )
+            return token
+
+        if oauth_config is None:
+            return token
+
+        lock = self._refresh_locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            fresh = self.get(server_name)
+            if fresh and not fresh.needs_proactive_refresh:
+                return fresh
+
+            try:
+                from grip.security.oauth import OAuthFlow
+
+                flow = OAuthFlow(oauth_config, server_name)  # type: ignore[arg-type]
+                new_token = await flow.refresh(token.refresh_token)
+                self.save(server_name, new_token)
+                logger.info(
+                    "Auto-refreshed token for '{}' (valid for {:.0f}s)",
+                    server_name,
+                    new_token.expires_in_seconds,
+                )
+                return new_token
+            except Exception as exc:
+                logger.error("Auto-refresh failed for '{}': {}", server_name, exc)
+                return token
 
     def save(self, server_name: str, token: StoredToken) -> None:
         """Save or update the token for a server."""
@@ -75,6 +153,15 @@ class TokenStore:
     def list_servers(self) -> list[str]:
         """Return names of all servers that have stored tokens."""
         return list(self._read_all().keys())
+
+    def list_expiring_soon(self, within_seconds: float = 300) -> list[tuple[str, StoredToken]]:
+        """Return servers whose tokens expire within the given window."""
+        results = []
+        for name in self.list_servers():
+            token = self.get(name)
+            if token and 0 < token.expires_in_seconds < within_seconds:
+                results.append((name, token))
+        return results
 
     def _read_all(self) -> dict[str, dict]:
         """Read the entire token store from disk."""

@@ -335,7 +335,7 @@ async def search_memory(
             detail="Query must be 1-500 characters",
         )
 
-    results = await asyncio.to_thread(memory_mgr.search_history, q)
+    results = await memory_mgr.search_history_hybrid(q)
     return {"query": q, "results": results, "count": len(results)}
 
 

@@ -137,9 +137,7 @@ class OAuthFlow:
                 )
             return self._parse_token_response(response.json())
 
-    async def _start_callback_server(
-        self, code_future: asyncio.Future[str]
-    ) -> asyncio.Server:
+    async def _start_callback_server(self, code_future: asyncio.Future[str]) -> asyncio.Server:
         """Start a minimal HTTP server on localhost to receive the OAuth callback."""
 
         async def handle_connection(
@@ -175,9 +173,7 @@ class OAuthFlow:
                     html = _ERROR_HTML.format(error="State mismatch - possible CSRF attack.")
                     self._send_http_response(writer, 400, html)
                     if not code_future.done():
-                        code_future.set_exception(
-                            OAuthFlowError("OAuth state mismatch")
-                        )
+                        code_future.set_exception(OAuthFlowError("OAuth state mismatch"))
                     return
 
                 if not code:
@@ -196,9 +192,7 @@ class OAuthFlow:
             except Exception as exc:
                 logger.debug("OAuth callback handler error: {}", exc)
                 if not code_future.done():
-                    code_future.set_exception(
-                        OAuthFlowError(f"Callback handler error: {exc}")
-                    )
+                    code_future.set_exception(OAuthFlowError(f"Callback handler error: {exc}"))
             finally:
                 writer.close()
                 with contextlib.suppress(Exception):
@@ -216,9 +210,7 @@ class OAuthFlow:
         return server
 
     @staticmethod
-    def _send_http_response(
-        writer: asyncio.StreamWriter, status: int, html: str
-    ) -> None:
+    def _send_http_response(writer: asyncio.StreamWriter, status: int, html: str) -> None:
         """Write a minimal HTTP response."""
         status_text = "OK" if status == 200 else "Bad Request"
         response = (

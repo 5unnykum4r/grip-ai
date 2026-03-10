@@ -41,6 +41,7 @@ def _parse_chat_id(chat_id: str) -> int | str:
     except ValueError:
         return chat_id
 
+
 # Telegram HTML mode only supports a small set of tags. We convert
 # common Markdown patterns the LLM produces into HTML equivalents.
 _MD_TO_HTML_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -385,7 +386,11 @@ class TelegramChannel(BaseChannel):
                         text = f"[Document: {doc_name}]\n\n{result.text_content}"
                         if caption:
                             text += f"\n\nCaption: {caption}"
-                        logger.debug("Telegram: converted document {} ({} chars)", doc_name, result.original_size)
+                        logger.debug(
+                            "Telegram: converted document {} ({} chars)",
+                            doc_name,
+                            result.original_size,
+                        )
                 except ImportError:
                     logger.debug("markitdown not installed, skipping document conversion")
                 except Exception as exc:

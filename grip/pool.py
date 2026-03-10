@@ -57,6 +57,7 @@ class ConnectionPool:
                 self._client = None
                 logger.debug("Closed HTTP connection pool")
 
+
 class ProviderPool:
     """Connection pool for LLM providers."""
 
