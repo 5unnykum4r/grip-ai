@@ -109,9 +109,24 @@ class SearchIndex:
         )
         conn.commit()
 
+    @staticmethod
+    def _sanitize_fts5_query(query: str) -> str:
+        """Sanitize a query string for safe use in FTS5 MATCH.
+
+        Wraps each token in double quotes to prevent FTS5 syntax characters
+        (like ?, *, +, -, etc.) from being interpreted as operators.
+        Returns an empty string if no valid tokens remain.
+        """
+        tokens = query.split()
+        quoted = ['"' + token.replace('"', '""') + '"' for token in tokens]
+        return " ".join(quoted)
+
     def search_bm25(self, query: str, *, max_results: int = 20) -> list[SearchResult]:
         """Full-text search using FTS5 BM25 scoring."""
         if not query.strip():
+            return []
+        sanitized = self._sanitize_fts5_query(query)
+        if not sanitized:
             return []
         conn = self._get_conn()
         rows = conn.execute(
@@ -123,7 +138,7 @@ class SearchIndex:
             ORDER BY rank
             LIMIT ?
             """,
-            (query, max_results),
+            (sanitized, max_results),
         ).fetchall()
         return [SearchResult(text=r[0], source=r[1], source_id=r[2], score=-r[3]) for r in rows]
 

@@ -55,6 +55,34 @@ class TestFTS5Insert:
         assert "new content" in results[0].text
 
 
+class TestFTS5Sanitization:
+    def test_query_with_question_mark_does_not_crash(self, search_index: SearchIndex):
+        search_index.initialize()
+        search_index.index_text("TheGuideX travel app", source="memory", source_id="m1")
+        # Should not raise sqlite3.OperationalError
+        results = search_index.search_bm25("TheGuideX?", max_results=5)
+        assert len(results) >= 1
+        assert results[0].source_id == "m1"
+
+    def test_query_with_asterisk(self, search_index: SearchIndex):
+        search_index.initialize()
+        search_index.index_text("wildcard patterns", source="memory", source_id="m1")
+        results = search_index.search_bm25("wildcard*", max_results=5)
+        assert len(results) >= 1
+
+    def test_query_with_double_quotes(self, search_index: SearchIndex):
+        search_index.initialize()
+        search_index.index_text("said hello world today", source="memory", source_id="m1")
+        results = search_index.search_bm25('"hello world"', max_results=5)
+        assert len(results) >= 1
+
+    def test_sanitize_fts5_query_static(self):
+        assert SearchIndex._sanitize_fts5_query("hello world") == '"hello" "world"'
+        assert SearchIndex._sanitize_fts5_query("what?") == '"what?"'
+        assert SearchIndex._sanitize_fts5_query('say "hi"') == '"say" """hi"""'
+        assert SearchIndex._sanitize_fts5_query("") == ""
+
+
 class TestVectorInsert:
     def test_index_with_embedding_and_search(self, search_index: SearchIndex):
         search_index.initialize()
