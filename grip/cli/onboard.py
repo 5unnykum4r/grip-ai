@@ -187,17 +187,6 @@ def _auto_test_connection(config: GripConfig, full_model: str) -> bool:
         try:
             provider = create_provider(config)
 
-            progress.update(task, description="[cyan]Testing chat completion...")
-            asyncio.run(
-                provider.chat(
-                    [LLMMessage(role="user", content="Say 'grip ready!' in 3 words or less.")],
-                    model=full_model,
-                    max_tokens=20,
-                    temperature=0.0,
-                )
-            )
-
-            progress.update(task, description="[cyan]Testing tool calling...")
             tool_def = [
                 {
                     "type": "function",
@@ -212,15 +201,30 @@ def _auto_test_connection(config: GripConfig, full_model: str) -> bool:
                     },
                 }
             ]
-            asyncio.run(
-                provider.chat(
-                    [LLMMessage(role="user", content="What time is it right now?")],
-                    model=full_model,
-                    tools=tool_def,
-                    max_tokens=100,
-                    temperature=0.0,
-                )
-            )
+
+            async def _run_tests() -> None:
+                try:
+                    progress.update(task, description="[cyan]Testing chat completion...")
+                    await provider.chat(
+                        [LLMMessage(role="user", content="Say 'grip ready!' in 3 words or less.")],
+                        model=full_model,
+                        max_tokens=20,
+                        temperature=0.0,
+                    )
+
+                    progress.update(task, description="[cyan]Testing tool calling...")
+                    await provider.chat(
+                        [LLMMessage(role="user", content="What time is it right now?")],
+                        model=full_model,
+                        tools=tool_def,
+                        max_tokens=100,
+                        temperature=0.0,
+                    )
+                finally:
+                    if hasattr(provider, "close"):
+                        await provider.close()
+
+            asyncio.run(_run_tests())
 
             progress.update(task, description="[green]✓ All tests passed!", completed=True)
             return True

@@ -85,7 +85,8 @@ class OpenAICompatProvider(LLMProvider):
         if temperature is not None:
             payload["temperature"] = temperature
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            token_key = self._max_tokens_key(resolved_model)
+            payload[token_key] = max_tokens
         if tools:
             payload["tools"] = tools
 
@@ -134,6 +135,18 @@ class OpenAICompatProvider(LLMProvider):
             provider=self._provider_name,
             hint="Verify the API base URL is correct.",
         )
+
+    @staticmethod
+    def _max_tokens_key(model: str) -> str:
+        """Return the correct payload key for limiting output tokens.
+
+        Newer OpenAI models (o1, o3, gpt-4o, gpt-4.5, gpt-5+) only accept
+        ``max_completion_tokens``; older and most local models use ``max_tokens``.
+        """
+        m = model.lower()
+        if m.startswith(("o1", "o3", "o4", "gpt-4o", "gpt-4.5", "gpt-5")):
+            return "max_completion_tokens"
+        return "max_tokens"
 
     def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
         choice = data["choices"][0]
