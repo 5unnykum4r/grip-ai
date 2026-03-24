@@ -1028,7 +1028,7 @@ def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in (429, 500, 502, 503, 504)
 
-    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.PoolTimeout)):
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.PoolTimeout)):
         return True
 
     exc_str = str(exc).lower()

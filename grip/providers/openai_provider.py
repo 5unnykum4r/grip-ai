@@ -114,6 +114,12 @@ class OpenAICompatProvider(LLMProvider):
                     provider=self._provider_name,
                     hint="The model may be slow or overloaded. Try again or use a faster model.",
                 ) from exc
+            except httpx.ReadError as exc:
+                raise ProviderConnectionError(
+                    f"[{self._provider_name}] Connection lost while reading response from {self._api_base}",
+                    provider=self._provider_name,
+                    hint="The server closed the connection unexpectedly. This is usually transient — try again.",
+                ) from exc
 
             if resp.status_code == 404 and endpoint == "/chat/completions":
                 continue
