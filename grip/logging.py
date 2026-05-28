@@ -67,6 +67,26 @@ def setup_logging(
     )
 
 
+def set_console_level(level: str) -> None:
+    """Change the console sink verbosity at runtime, keeping the file at DEBUG.
+
+    Used by the interactive/one-shot agent to raise the console to WARNING so
+    routine INFO logs (tool execution, LLM calls, loop iterations) go only to
+    ``~/.grip/logs/grip.log`` and don't clutter the chat UI. The value is stored
+    so a later ``reconfigure_console_sink()`` preserves it.
+    """
+    global _console_level, _console_sink_id
+    _console_level = level
+    if _console_sink_id is not None:
+        logger.remove(_console_sink_id)
+    _console_sink_id = logger.add(
+        sys.stderr,
+        level=_console_level,
+        format=_CONSOLE_FORMAT,
+        colorize=True,
+    )
+
+
 def reconfigure_console_sink(*, interactive: bool = False) -> None:
     """Swap the loguru console sink between normal and interactive modes.
 

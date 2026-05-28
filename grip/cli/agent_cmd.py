@@ -112,6 +112,21 @@ def _resolve_provider_display(model_string: str, config: GripConfig) -> tuple[st
         return "Unknown", model_string
 
 
+def _quiet_console_logs() -> None:
+    """Raise the console log level to WARNING for the chat UI (unless --verbose).
+
+    The agent already renders its own clean output (spinner, response, stats),
+    so routine INFO logs — tool execution, shell commands, LLM calls, loop
+    iterations — are just noise on the console. They still go to the file log
+    (~/.grip/logs/grip.log). Pass --verbose / -v to keep INFO on the console.
+    """
+    from grip.cli.app import state
+    from grip.logging import set_console_level
+
+    if not state.verbose:
+        set_console_level("WARNING")
+
+
 def _read_stdin() -> str:
     """Read piped stdin if available (non-TTY). Returns empty string if no piped input."""
     if sys.stdin.isatty():
@@ -454,6 +469,7 @@ async def _one_shot(
     config: GripConfig, message: str, *, model: str | None, no_markdown: bool
 ) -> None:
     """Send a single message, print the response, and exit."""
+    _quiet_console_logs()
     engine, _, _, _ = _build_engine(config)
 
     with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
@@ -470,6 +486,7 @@ async def _interactive(config: GripConfig, *, model: str | None, no_markdown: bo
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.patch_stdout import patch_stdout
 
+    _quiet_console_logs()
     engine, session_mgr, memory_mgr, trust_mgr = _build_engine(config)
     session_key = _SESSION_KEY
 
