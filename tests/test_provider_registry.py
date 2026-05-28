@@ -149,6 +149,39 @@ class TestCreateProvider:
         provider = create_provider(config)
         assert "Ollama" in provider.name
 
+    def test_num_retries_forwarded_to_provider(self):
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(model="openai/gpt-4o", num_retries=4),
+            ),
+            providers={"openai": ProviderEntry(api_key="test-key")},
+        )
+        provider = create_provider(config)
+        assert provider._num_retries == 4
+
+    def test_fallback_models_build_router_deployments(self):
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    model="anthropic/claude-sonnet-4-6",
+                    fallback_models=["openai/gpt-4o-mini", "groq/llama-3.3-70b-versatile"],
+                ),
+            ),
+            providers={
+                "anthropic": ProviderEntry(api_key="ak"),
+                "openai": ProviderEntry(api_key="ok"),
+                "groq": ProviderEntry(api_key="gk"),
+            },
+        )
+        provider = create_provider(config)
+        # Two fallback deployments are built and the Router is active.
+        assert len(provider._fallback_deployments) == 2
+        assert provider.router is not None
+        # Each deployment carries a routable model string and its own key.
+        models = [d["model"] for d in provider._fallback_deployments]
+        assert "openai/gpt-4o-mini" in models
+        assert provider._fallback_deployments[0]["api_key"] == "ok"
+
 
 class TestAgentDefaultsProvider:
     """Test the provider field on AgentDefaults."""

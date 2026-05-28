@@ -149,4 +149,12 @@ def create_engine(
         engine = TrackedEngine(engine, tracker)
         logger.info("Token tracking enabled (daily limit: {})", max_daily)
 
+        # Record per-call USD cost via LiteLLM's success callback. Tokens come
+        # from AgentRunResult (TrackedEngine.record); cost only exists on the
+        # LiteLLM callback path, so the two are wired separately.
+        from grip.observe.cost_logger import register_cost_logger
+
+        register_cost_logger(tracker)
+        logger.info("LiteLLM cost tracking enabled.")
+
     return engine

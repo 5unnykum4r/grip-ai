@@ -229,13 +229,24 @@ class TestToneHints:
 class TestTokenSavings:
     """Guard against system prompt growing beyond the optimized size."""
 
-    def test_prompt_size_under_limit(self, builder: ContextBuilder):
+    def test_prompt_size_under_limit(self, builder: ContextBuilder, workspace: WorkspaceManager):
+        from grip.skills.loader import SkillsLoader
+
         msg = builder.build_system_message(user_message="hello", session_key="cli:test")
         prompt_len = len(msg.content)
 
-        # Identity files (~6KB expanded AGENT.md) + skill listing (~3KB for ~30 skills) + metadata (~200 bytes)
-        # Total should be under 15KB
-        assert prompt_len < 15000, f"System prompt is {prompt_len} chars — expected under 15000"
+        # The prompt lists each skill as a one-line description, so its size scales
+        # with the number of bundled skills. A fixed byte cap goes stale every time
+        # grip ships more skills; instead bound it relative to the skill count.
+        # Baseline (identity files + memory/history + metadata) ~9KB, and each skill
+        # must add only a short line — never its full body (asserted separately above).
+        n_skills = len(SkillsLoader(workspace.root).scan())
+        max_expected = 9000 + n_skills * 250
+        assert prompt_len < max_expected, (
+            f"System prompt is {prompt_len} chars for {n_skills} skills — "
+            f"expected under {max_expected}. A jump this large suggests skill bodies "
+            f"(not one-line descriptions) are leaking into the prompt."
+        )
 
     def test_build_system_message_signature_simplified(self, builder: ContextBuilder):
         """Ensure old parameters (tool_definitions, tool_registry, skill_names) are gone."""

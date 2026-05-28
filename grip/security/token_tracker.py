@@ -69,6 +69,7 @@ class TokenTracker:
             "completion_tokens": 0,
             "total_tokens": 0,
             "request_count": 0,
+            "cost_usd": 0.0,
         }
 
     def _save(self) -> None:
@@ -110,11 +111,33 @@ class TokenTracker:
                     max(0, remaining),
                 )
 
+    def record_cost(self, cost_usd: float) -> None:
+        """Accumulate USD cost from a completed LLM call (thread-safe).
+
+        Cost is reported separately from tokens because LiteLLM computes it
+        via its own pricing tables and delivers it through a success callback,
+        not through the engine's AgentRunResult. Recording cost never touches
+        token counts (and vice versa) so the two paths stay independent.
+        """
+        if cost_usd <= 0:
+            return
+        with self._lock:
+            if self._data.get("date") != self._today():
+                self._data = self._empty()
+            self._data["cost_usd"] = self._data.get("cost_usd", 0.0) + cost_usd
+            self._save()
+
     @property
     def total_today(self) -> int:
         if self._data.get("date") != self._today():
             return 0
         return self._data["total_tokens"]
+
+    @property
+    def total_cost_today(self) -> float:
+        if self._data.get("date") != self._today():
+            return 0.0
+        return self._data.get("cost_usd", 0.0)
 
     @property
     def requests_today(self) -> int:
@@ -139,4 +162,5 @@ class TokenTracker:
             "request_count": self.requests_today,
             "limit": self._max_daily if self._max_daily > 0 else "unlimited",
             "remaining": self.remaining,
+            "cost_usd": self.total_cost_today,
         }

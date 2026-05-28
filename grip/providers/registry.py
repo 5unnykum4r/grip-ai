@@ -271,6 +271,40 @@ def _get_api_base(spec: ProviderSpec, providers_config: dict[str, ProviderEntry]
     return spec.api_base
 
 
+def _build_fallback_deployments(
+    config: GripConfig, providers_config: dict[str, ProviderEntry]
+) -> list[dict[str, str]]:
+    """Resolve ``fallback_models`` into per-deployment dicts for litellm.Router.
+
+    Each fallback model string is resolved to its provider so the deployment
+    carries a routable ``model`` plus that provider's own ``api_key``/``api_base``
+    (credentials live in the model_list, never in os.environ). Models whose
+    provider has no usable key are skipped with a warning rather than silently
+    producing an unauthenticated deployment.
+    """
+    deployments: list[dict[str, str]] = []
+    for model_string in config.agents.defaults.fallback_models:
+        spec, bare_model = ProviderRegistry.resolve_model(model_string)
+        api_key = _get_api_key(spec, providers_config)
+        api_base = _get_api_base(spec, providers_config)
+
+        routable = bare_model
+        if spec.model_prefix and not routable.startswith(spec.model_prefix):
+            routable = f"{spec.model_prefix}{bare_model}"
+
+        is_local = spec.name in ("ollama", "ollama_cloud", "llamacpp", "lmstudio", "vllm")
+        if not api_key and not is_local:
+            logger.warning(
+                "Skipping fallback model '{}': no API key configured for provider '{}'.",
+                model_string,
+                spec.name,
+            )
+            continue
+
+        deployments.append({"model": routable, "api_key": api_key, "api_base": api_base})
+    return deployments
+
+
 def create_provider(config: GripConfig) -> LLMProvider:
     """Instantiate the correct LLMProvider for the configured default model.
 
@@ -283,6 +317,7 @@ def create_provider(config: GripConfig) -> LLMProvider:
     spec, bare_model = ProviderRegistry.resolve_model(model_string, provider=explicit_provider)
     api_key = _get_api_key(spec, config.providers)
     api_base = _get_api_base(spec, config.providers)
+    num_retries = config.agents.defaults.num_retries
 
     logger.info(
         "Creating provider: {} (model={}, base={})",
@@ -303,10 +338,14 @@ def create_provider(config: GripConfig) -> LLMProvider:
 
     from grip.providers.litellm_provider import LiteLLMProvider
 
+    fallback_deployments = _build_fallback_deployments(config, config.providers)
+
     return LiteLLMProvider(
         provider_name=spec.display_name,
         model_prefix=spec.model_prefix.rstrip("/"),
         api_key=api_key,
         api_base=api_base,
         default_model=bare_model,
+        num_retries=num_retries,
+        fallback_deployments=fallback_deployments,
     )

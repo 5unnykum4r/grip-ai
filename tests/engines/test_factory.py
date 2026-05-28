@@ -68,6 +68,46 @@ class TestSdkPermissionModeField:
         assert defaults.sdk_permission_mode == "bypassPermissions"
 
 
+class TestReliabilityConfigFields:
+    """num_retries and fallback_models control LiteLLM reliability behavior."""
+
+    def test_num_retries_default(self):
+        assert AgentDefaults().num_retries == 2
+
+    def test_num_retries_custom(self):
+        assert AgentDefaults(num_retries=5).num_retries == 5
+
+    def test_num_retries_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            AgentDefaults(num_retries=-1)
+
+    def test_fallback_models_default_empty(self):
+        assert AgentDefaults().fallback_models == []
+
+    def test_fallback_models_custom_chain(self):
+        chain = ["anthropic/claude-haiku-4-5", "openai/gpt-4o-mini"]
+        assert AgentDefaults(fallback_models=chain).fallback_models == chain
+
+
+class TestSdkToolBridgeConfigFields:
+    """SDK engine exposes grip's tool registry via configurable bridging."""
+
+    def test_expose_grip_tools_default_true(self):
+        assert AgentDefaults().sdk_expose_grip_tools is True
+
+    def test_skip_categories_default_covers_sdk_natives(self):
+        skip = AgentDefaults().sdk_tool_skip_categories
+        assert "filesystem" in skip
+        assert "shell" in skip
+        assert "orchestration" in skip
+        assert "messaging" in skip
+
+    def test_skip_categories_customizable(self):
+        assert AgentDefaults(sdk_tool_skip_categories=["shell"]).sdk_tool_skip_categories == [
+            "shell"
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures for factory tests
 # ---------------------------------------------------------------------------
@@ -167,6 +207,42 @@ class TestCreateEngineWithLiteLLM:
 
         assert isinstance(engine, LearningEngine)
         assert isinstance(engine._inner, LiteLLMRunner)
+
+
+class TestCostLoggerWiring:
+    """When token tracking is on, the factory registers a LiteLLM cost callback."""
+
+    def test_cost_logger_registered_when_daily_limit_set(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        import litellm
+
+        from grip.engines.factory import create_engine
+        from grip.observe.cost_logger import CostTrackingLogger
+
+        config = GripConfig(
+            agents={
+                "defaults": {
+                    "workspace": str(tmp_workspace),
+                    "semantic_cache_enabled": False,
+                    "engine": "litellm",
+                    "max_daily_tokens": 100_000,
+                }
+            },
+            tools={"restrict_to_workspace": True},
+        )
+
+        original = list(litellm.callbacks)
+        try:
+            with (
+                patch(_PATCH_CREATE_PROVIDER, return_value=MagicMock()),
+                patch(_PATCH_CREATE_REGISTRY, return_value=MagicMock()),
+                patch(_PATCH_AGENT_LOOP, return_value=MagicMock()),
+            ):
+                create_engine(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+            assert any(isinstance(c, CostTrackingLogger) for c in litellm.callbacks)
+        finally:
+            litellm.callbacks = original
 
 
 class TestCreateEngineSdkFallback:
