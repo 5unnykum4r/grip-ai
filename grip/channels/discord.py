@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Any
 
 from loguru import logger
 
@@ -35,7 +36,8 @@ class DiscordChannel(BaseChannel):
 
     def __init__(self, config: ChannelEntry) -> None:
         super().__init__(config)
-        self._client = None
+        # discord.py Client handle; created in start().
+        self._client: Any = None
         self._ready_event = asyncio.Event()
         self._task: asyncio.Task | None = None
 

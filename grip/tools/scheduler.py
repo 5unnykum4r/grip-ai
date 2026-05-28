@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ _DAY_MAP = {
     "sun": "0",
 }
 
-_NL_PATTERNS: list[tuple[re.Pattern[str], str | callable]] = [
+_NL_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str] | None]] = [
     (re.compile(r"every\s+(\d+)\s+minutes?", re.IGNORECASE), lambda m: f"*/{m.group(1)} * * * *"),
     (re.compile(r"every\s+(\d+)\s+hours?", re.IGNORECASE), lambda m: f"0 */{m.group(1)} * * *"),
     (re.compile(r"every\s+minute", re.IGNORECASE), lambda m: "* * * * *"),

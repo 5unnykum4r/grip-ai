@@ -4,6 +4,14 @@ All notable changes to grip are documented here. This project follows
 [Semantic Versioning](https://semver.org/). Versions prior to 1.6.0 are
 recorded in the git history and release tags.
 
+## [1.6.1] - 2026-05-29
+
+### Changed
+- The entire codebase is now `mypy`-clean (0 errors across 123 source files).
+  Added a `[tool.mypy]` config and fixed type annotations across channels,
+  tools, services, and the agent loop. No behavior or API changes.
+- CI now runs `mypy` as a dedicated type-check job so the tree stays clean.
+
 ## [1.6.0] - 2026-05-29
 
 ### Added

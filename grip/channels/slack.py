@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Any
 
 from loguru import logger
 
@@ -40,8 +41,9 @@ class SlackChannel(BaseChannel):
 
     def __init__(self, config: ChannelEntry) -> None:
         super().__init__(config)
-        self._socket_client = None
-        self._web_client = None
+        # slack-sdk SocketModeClient / AsyncWebClient handles; created in start().
+        self._socket_client: Any = None
+        self._web_client: Any = None
         self._task: asyncio.Task | None = None
 
     @property

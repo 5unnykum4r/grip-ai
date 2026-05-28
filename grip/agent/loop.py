@@ -156,7 +156,7 @@ class AgentLoop:
             emb_api_key = _get_api_key(emb_spec, config.providers)
             emb_api_base = _get_api_base(emb_spec, config.providers)
 
-            self._hybrid_search = HybridSearch(
+            self._hybrid_search: HybridSearch | None = HybridSearch(
                 workspace_path=workspace_path,
                 embedding_model=search_cfg.embedding_model,
                 embedding_dimensions=search_cfg.embedding_dimensions,

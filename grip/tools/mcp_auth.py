@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from loguru import logger
+from pydantic import AnyUrl
 
 _DEFAULT_CALLBACK_PORT = 18801
 
@@ -315,7 +316,7 @@ async def discover_mcp_oauth_metadata(
         if client_info is None:
             scope_list = scopes.split() if scopes else []
             client_metadata = OAuthClientMetadata(
-                redirect_uris=[redirect_uri],
+                redirect_uris=[AnyUrl(redirect_uri)],
                 client_name="grip",
                 token_endpoint_auth_method="client_secret_post",
                 grant_types=["authorization_code", "refresh_token"],
@@ -356,7 +357,7 @@ def create_mcp_oauth_auth(
 
     storage = MCPTokenStorage(server_name)
     client_metadata = OAuthClientMetadata(
-        redirect_uris=[f"http://localhost:{callback_port}/callback"],
+        redirect_uris=[AnyUrl(f"http://localhost:{callback_port}/callback")],
         client_name="grip",
         token_endpoint_auth_method="client_secret_post",
         grant_types=["authorization_code", "refresh_token"],

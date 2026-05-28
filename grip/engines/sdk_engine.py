@@ -79,7 +79,7 @@ class SDKRunner(EngineProtocol):
 
         defaults = config.agents.defaults
         self._model: str = defaults.sdk_model
-        self._permission_mode: str = defaults.sdk_permission_mode
+        self._permission_mode = defaults.sdk_permission_mode
         self._cwd: str = str(workspace.root)
         self._mcp_servers = config.tools.mcp_servers
         self._send_callback: Callable | None = None
@@ -313,7 +313,7 @@ class SDKRunner(EngineProtocol):
         tools.extend([send_message, send_file, remember, recall])
 
         try:
-            import yfinance  # noqa: F401
+            import yfinance  # type: ignore[import-untyped]  # noqa: F401
 
             @tool(
                 "stock_quote",
@@ -321,7 +321,7 @@ class SDKRunner(EngineProtocol):
                 {"symbol": str},
             )
             async def stock_quote(args: dict[str, Any]) -> dict[str, Any]:
-                import yfinance as yf
+                import yfinance as yf  # type: ignore[import-untyped]
 
                 def _fetch_quote(symbol: str) -> dict:
                     ticker = yf.Ticker(symbol)
@@ -452,8 +452,8 @@ class SDKRunner(EngineProtocol):
             mcp_servers=mcp_servers,
             permission_mode=self._permission_mode,
             cwd=self._cwd,
-            allowed_tools=allowed_tools if allowed_tools else None,
-            env=env_opts if env_opts else None,
+            allowed_tools=allowed_tools,
+            env=env_opts,
             extra_args=extra_args if extra_args else {},
         )
 
@@ -541,8 +541,8 @@ class SDKRunner(EngineProtocol):
             mcp_servers=mcp_servers,
             permission_mode=self._permission_mode,
             cwd=self._cwd,
-            allowed_tools=allowed_tools if allowed_tools else None,
-            env=env_opts if env_opts else None,
+            allowed_tools=allowed_tools,
+            env=env_opts,
             extra_args=extra_args if extra_args else {},
         )
 

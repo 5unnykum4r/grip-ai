@@ -430,6 +430,8 @@ class CronService:
             return
 
         channel, chat_id = parts
+        if self._bus is None:
+            return
         try:
             await self._bus.publish_outbound(
                 OutboundMessage(
