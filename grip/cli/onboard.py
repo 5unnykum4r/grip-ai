@@ -25,7 +25,7 @@ from grip.config.schema import (
     SearchConfig,
     ToolsConfig,
 )
-from grip.providers.registry import ProviderRegistry, create_provider
+from grip.providers.registry import ProviderRegistry, ProviderSpec, create_provider
 from grip.providers.types import LLMMessage
 from grip.workspace import WorkspaceManager
 
@@ -163,6 +163,91 @@ def _ask_linux_user() -> None:
             "[yellow]Please create the user manually and re-run onboard as that user.[/yellow]"
         )
         return
+
+
+def _fetch_provider_models(
+    spec: ProviderSpec, api_key: str, api_base: str
+) -> tuple[list[str] | None, str | None]:
+    """Verify the API key and fetch the provider's live model list.
+
+    Hits the OpenAI-compatible ``GET {api_base}/models`` endpoint, which both
+    authenticates the key and returns the catalogue. Returns:
+
+    * ``(models, None)``  — success; sorted list of model IDs.
+    * ``(None, "auth")``  — key rejected (401/403); caller should re-prompt.
+    * ``(None, None)``    — endpoint unreachable / unsupported / empty; caller
+      falls back to the static ``default_models`` and relies on the end-of-flow
+      connection test for validation.
+    """
+    import httpx
+
+    base = (api_base or spec.api_base).rstrip("/")
+    if not base:
+        return None, None
+
+    headers = {"Authorization": f"Bearer {api_key.strip()}"}
+    if spec.name == "openrouter":
+        headers["HTTP-Referer"] = "https://github.com/5unnykum4r/grip-ai"
+        headers["X-Title"] = "Grip AI"
+        # OpenRouter's /models endpoint is public (returns 200 for any key), so a
+        # bad key would slip through. Verify against the authenticated /key
+        # endpoint first; only then trust the catalogue.
+        try:
+            key_resp = httpx.get(f"{base}/key", headers=headers, timeout=10.0)
+        except Exception:
+            return None, None
+        if key_resp.status_code in (401, 403):
+            return None, "auth"
+
+    try:
+        resp = httpx.get(f"{base}/models", headers=headers, timeout=10.0)
+    except Exception:
+        return None, None
+
+    if resp.status_code in (401, 403):
+        return None, "auth"
+    if resp.status_code != 200:
+        return None, None
+
+    try:
+        data = resp.json().get("data", [])
+        models = sorted(
+            {
+                item["id"]
+                for item in data
+                if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
+            }
+        )
+    except Exception:
+        return None, None
+
+    return (models or None), None
+
+
+def _verify_key_and_list_models(
+    spec: ProviderSpec, api_key: str, api_base: str
+) -> tuple[list[str] | None, str | None]:
+    """Wrap ``_fetch_provider_models`` with a progress spinner for the wizard."""
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Verifying key & loading models...", total=None)
+        models, err = _fetch_provider_models(spec, api_key, api_base)
+        if err == "auth":
+            progress.update(task, description="[red]✗ API key rejected", completed=True)
+        elif models:
+            progress.update(
+                task, description=f"[green]✓ Key valid — {len(models)} models", completed=True
+            )
+        else:
+            progress.update(
+                task,
+                description="[yellow]Key entered (couldn't list models — using defaults)",
+                completed=True,
+            )
+    return models, err
 
 
 def _auto_test_connection(config: GripConfig, full_model: str) -> bool:
@@ -585,6 +670,8 @@ def _run_onboard_wizard() -> bool:
         _print_step(2, 7, "Configure API key & Endpoint")
         api_key = ""
         api_base = selected_spec.api_base if selected_spec else ""
+        # Live model catalogue fetched after key verification; None until then.
+        fetched_models: list[str] | None = None
 
         local_providers = ["ollama", "llamacpp", "lmstudio"]
         is_local = provider_name in local_providers
@@ -593,7 +680,14 @@ def _run_onboard_wizard() -> bool:
             console.print()
             spec_name = selected_spec.display_name if selected_spec else provider_name
             console.print(f"  [dim]{spec_name} is a local model - no API key needed.[/dim]")
-        elif selected_spec and selected_spec.api_key_env:
+            # Confirm/override the local server URL. A non-empty default avoids the
+            # scheme-less-URL crash (#7) while letting users point at a remote host.
+            default_base = (selected_spec.api_base if selected_spec else "") or ""
+            custom_base = inquirer.text(
+                message="Local server base URL:",
+                default=default_base,
+            ).execute()
+            api_base = custom_base.strip() or default_base
             while True:
                 console.print(
                     Panel(
@@ -612,6 +706,18 @@ def _run_onboard_wizard() -> bool:
                     console.print("[red]API key is required. Please enter a valid key.[/red]")
                     continue
 
+                # Verify the key against the provider and load its live models.
+                # A rejected key re-prompts; other failures fall back to defaults.
+                fetched_models, err = _verify_key_and_list_models(
+                    selected_spec, api_key.strip(), api_base
+                )
+                if err == "auth":
+                    console.print(
+                        f"[red]That key was rejected by {selected_spec.display_name}. "
+                        f"Please check it and try again.[/red]"
+                    )
+                    continue
+
                 break
         elif selected_spec:
             custom_base = inquirer.text(
@@ -623,8 +729,24 @@ def _run_onboard_wizard() -> bool:
 
         _print_step(3, 7, "Choose a default model")
 
-        if selected_spec and selected_spec.default_models:
-            model_choices = [Choice(value=m, name=m) for m in selected_spec.default_models]
+        # Prefer the provider's live catalogue (fetched during key verification).
+        # When available, surface the curated default_models first for convenience,
+        # then the rest of the live list. Fall back to the static defaults offline.
+        if fetched_models:
+            curated = [
+                m
+                for m in (selected_spec.default_models if selected_spec else [])
+                if m in fetched_models
+            ]
+            rest = [m for m in fetched_models if m not in curated]
+            available_models = curated + rest
+        elif selected_spec:
+            available_models = list(selected_spec.default_models)
+        else:
+            available_models = []
+
+        if available_models:
+            model_choices = [Choice(value=m, name=m) for m in available_models]
             model_choices.append(Choice(value="_custom", name="Enter custom model name..."))
 
             model_selected = inquirer.fuzzy(  # type: ignore[attr-defined]
@@ -944,6 +1066,13 @@ def _run_onboard_wizard() -> bool:
                     api_key=api_key,
                     default_model=bare_model,
                 )
+        elif is_local and api_base:
+            # Persist the local server URL so runtime resolution doesn't fall back
+            # to an empty base and crash httpx with UnsupportedProtocol (#7).
+            providers_dict[provider_name] = ProviderEntry(
+                api_base=api_base,
+                default_model=bare_model,
+            )
 
         config = GripConfig(
             agents=AgentsConfig(

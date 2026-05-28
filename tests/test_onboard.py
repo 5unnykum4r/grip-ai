@@ -202,3 +202,138 @@ class TestSelectProvider:
         name, is_custom = _select_provider()
         assert name == "llamacpp"
         assert is_custom is False
+
+
+class TestFetchProviderModels:
+    """_fetch_provider_models verifies the key and loads live models (Fix)."""
+
+    def _spec(self):
+        return ProviderRegistry.get_spec("openrouter")
+
+    def _resp(self, status_code, json_data=None, raises=False):
+        r = MagicMock()
+        r.status_code = status_code
+        if raises:
+            r.json.side_effect = ValueError("bad json")
+        else:
+            r.json.return_value = json_data or {}
+        return r
+
+    def test_success_returns_model_ids(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        payload = {"data": [{"id": "anthropic/claude-opus-4.6"}, {"id": "openai/gpt-4o"}]}
+        with patch("httpx.get", return_value=self._resp(200, payload)):
+            models, err = _fetch_provider_models(self._spec(), "sk-key", "")
+        assert err is None
+        assert "openai/gpt-4o" in models
+        assert "anthropic/claude-opus-4.6" in models
+
+    def test_invalid_key_returns_auth_error(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", return_value=self._resp(401)):
+            models, err = _fetch_provider_models(self._spec(), "bad", "")
+        assert models is None
+        assert err == "auth"
+
+    def test_forbidden_returns_auth_error(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", return_value=self._resp(403)):
+            models, err = _fetch_provider_models(self._spec(), "bad", "")
+        assert err == "auth"
+
+    def test_server_error_falls_back(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", return_value=self._resp(500)):
+            models, err = _fetch_provider_models(self._spec(), "k", "")
+        assert models is None
+        assert err is None  # non-auth failure → caller falls back to static list
+
+    def test_network_error_falls_back(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", side_effect=OSError("network down")):
+            models, err = _fetch_provider_models(self._spec(), "k", "")
+        assert models is None
+        assert err is None
+
+    def test_malformed_json_falls_back(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", return_value=self._resp(200, raises=True)):
+            models, err = _fetch_provider_models(self._spec(), "k", "")
+        assert models is None
+        assert err is None
+
+    def test_empty_model_list_falls_back(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        with patch("httpx.get", return_value=self._resp(200, {"data": []})):
+            models, err = _fetch_provider_models(self._spec(), "k", "")
+        assert models is None
+        assert err is None
+
+    def test_openrouter_verifies_key_despite_public_models(self):
+        """OpenRouter's /models is public, so a bad key must be caught via /key."""
+        from grip.cli.onboard import _fetch_provider_models
+
+        def by_url(url, **_kwargs):
+            if url.endswith("/key"):
+                return self._resp(401)  # key rejected by authenticated endpoint
+            return self._resp(200, {"data": [{"id": "openai/gpt-4o"}]})  # public
+
+        with patch("httpx.get", side_effect=by_url):
+            models, err = _fetch_provider_models(self._spec(), "bad-key", "")
+        assert models is None
+        assert err == "auth"
+
+    def test_openrouter_valid_key_loads_models(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        def by_url(url, **_kwargs):
+            if url.endswith("/key"):
+                return self._resp(200, {"data": {"label": "ok"}})
+            return self._resp(200, {"data": [{"id": "openai/gpt-4o"}, {"id": "x-ai/grok-4.1"}]})
+
+        with patch("httpx.get", side_effect=by_url):
+            models, err = _fetch_provider_models(self._spec(), "good-key", "")
+        assert err is None
+        assert "openai/gpt-4o" in models
+
+    def test_non_openrouter_uses_models_as_auth_gate(self):
+        """Providers whose /models requires auth need no separate /key probe."""
+        from grip.cli.onboard import _fetch_provider_models
+
+        spec = ProviderRegistry.get_spec("openai")
+        with patch("httpx.get", return_value=self._resp(401)) as mock_get:
+            models, err = _fetch_provider_models(spec, "bad", "")
+        assert err == "auth"
+        # Only /models is probed for non-openrouter providers (no /key call).
+        assert all(call.args[0].endswith("/models") for call in mock_get.call_args_list)
+
+    def test_non_string_ids_are_ignored(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        spec = ProviderRegistry.get_spec("openai")
+        payload = {"data": [{"id": "gpt-4o"}, {"id": 123}, {"id": None}, {"nope": "x"}]}
+        with patch("httpx.get", return_value=self._resp(200, payload)):
+            models, err = _fetch_provider_models(spec, "k", "")
+        assert err is None
+        assert models == ["gpt-4o"]
+
+    def test_custom_api_base_overrides_spec(self):
+        from grip.cli.onboard import _fetch_provider_models
+
+        spec = ProviderRegistry.get_spec("openai")
+        captured = {}
+
+        def by_url(url, **_kwargs):
+            captured["url"] = url
+            return self._resp(200, {"data": [{"id": "local-model"}]})
+
+        with patch("httpx.get", side_effect=by_url):
+            _fetch_provider_models(spec, "k", "https://proxy.local/v1/")
+        assert captured["url"] == "https://proxy.local/v1/models"  # trailing slash trimmed

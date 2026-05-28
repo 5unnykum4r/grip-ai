@@ -104,7 +104,9 @@ class TestRouterFallback:
         mock_router.acompletion = AsyncMock(return_value=_aiter([chunk]))
         with patch("litellm.Router", return_value=mock_router):
             provider = _make_provider(fallback_deployments=self._deployments())
-            deltas = [d async for d in provider.chat_stream([LLMMessage(role="user", content="hi")])]
+            deltas = [
+                d async for d in provider.chat_stream([LLMMessage(role="user", content="hi")])
+            ]
 
         assert mock_router.acompletion.called
         # Router call uses the primary alias, not the raw model string.

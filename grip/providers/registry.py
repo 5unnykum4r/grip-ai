@@ -144,7 +144,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         name="ollama",
         display_name="Ollama (Local)",
-        api_base="",
+        # Ollama's OpenAI-compatible endpoint. A non-empty default prevents the
+        # httpx.UnsupportedProtocol crash when no api_base is configured (#7).
+        api_base="http://localhost:11434/v1",
         api_key_env="",
         default_models=["llama3.2", "qwen2.5", "mistral"],
         model_prefix="",
@@ -160,7 +162,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         name="lmstudio",
         display_name="LM Studio (Local)",
-        api_base="",
+        # LM Studio's default local server port (OpenAI-compatible). See #7.
+        api_base="http://localhost:1234/v1",
         api_key_env="",
         default_models=["llama-3.2-3b-instruct", "qwen2.5-7b-instruct"],
         model_prefix="",
@@ -183,6 +186,14 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_prefix="zhipu/",
     ),
 )
+
+# Fallback base URLs for local providers whose api_base may be left blank (#7).
+_LOCAL_DEFAULT_BASES: dict[str, str] = {
+    "ollama": "http://localhost:11434/v1",
+    "lmstudio": "http://localhost:1234/v1",
+    "llamacpp": "http://localhost:8080/v1",
+    "vllm": "http://localhost:8000/v1",
+}
 
 _SPEC_BY_NAME: dict[str, ProviderSpec] = {s.name: s for s in PROVIDERS}
 _SPEC_BY_PREFIX: dict[str, ProviderSpec] = {s.model_prefix: s for s in PROVIDERS if s.model_prefix}
@@ -285,21 +296,31 @@ def _build_fallback_deployments(
     deployments: list[dict[str, str]] = []
     for model_string in config.agents.defaults.fallback_models:
         spec, bare_model = ProviderRegistry.resolve_model(model_string)
+
+        # Fallback chains are a cloud-reliability feature routed through
+        # litellm.Router. Local providers (ollama/lmstudio/...) aren't reliably
+        # routable that way and would crash Router construction, so skip them.
+        if spec.name in ("ollama", "ollama_cloud", "llamacpp", "lmstudio", "vllm"):
+            logger.warning(
+                "Skipping fallback model '{}': local providers can't be used as "
+                "litellm.Router fallbacks.",
+                model_string,
+            )
+            continue
+
         api_key = _get_api_key(spec, providers_config)
-        api_base = _get_api_base(spec, providers_config)
-
-        routable = bare_model
-        if spec.model_prefix and not routable.startswith(spec.model_prefix):
-            routable = f"{spec.model_prefix}{bare_model}"
-
-        is_local = spec.name in ("ollama", "ollama_cloud", "llamacpp", "lmstudio", "vllm")
-        if not api_key and not is_local:
+        if not api_key:
             logger.warning(
                 "Skipping fallback model '{}': no API key configured for provider '{}'.",
                 model_string,
                 spec.name,
             )
             continue
+
+        api_base = _get_api_base(spec, providers_config)
+        routable = bare_model
+        if spec.model_prefix and not routable.startswith(spec.model_prefix):
+            routable = f"{spec.model_prefix}{bare_model}"
 
         deployments.append({"model": routable, "api_key": api_key, "api_base": api_base})
     return deployments
@@ -328,6 +349,16 @@ def create_provider(config: GripConfig) -> LLMProvider:
 
     if spec.name in ("ollama", "ollama_cloud", "llamacpp", "lmstudio", "vllm") or not api_key:
         from grip.providers.openai_provider import OpenAICompatProvider
+
+        # Defensive fallback (#7): a blank api_base produces a scheme-less URL and
+        # crashes httpx with UnsupportedProtocol. If config left it empty, restore
+        # the spec default (or a localhost default for known local providers).
+        if not api_base:
+            api_base = spec.api_base or _LOCAL_DEFAULT_BASES.get(spec.name, "")
+            if api_base:
+                logger.warning(
+                    "No api_base configured for '{}'; defaulting to {}.", spec.name, api_base
+                )
 
         return OpenAICompatProvider(
             provider_name=spec.display_name,
