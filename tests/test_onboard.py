@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import MagicMock, patch
 
 from grip.config.schema import GripConfig
@@ -337,3 +338,60 @@ class TestFetchProviderModels:
         with patch("httpx.get", side_effect=by_url):
             _fetch_provider_models(spec, "k", "https://proxy.local/v1/")
         assert captured["url"] == "https://proxy.local/v1/models"  # trailing slash trimmed
+
+
+class TestWizardCloudProviderFlow:
+    """Regression: a cloud provider (OpenRouter) must hit the API-key + verify
+    branch, not the bare 'API base URL' branch."""
+
+    def _drive(self, provider_name):
+        import grip.cli.onboard as o
+
+        calls = []
+
+        def rec(kind):
+            def factory(*a, **k):
+                msg = str(k.get("message", a[0] if a else ""))
+                calls.append((kind, msg))
+                m = MagicMock()
+                if kind == "confirm":
+                    m.execute.return_value = "Continue with setup" in msg
+                elif kind == "secret":
+                    m.execute.return_value = "sk-test-key"
+                elif kind == "fuzzy":
+                    m.execute.return_value = "openai/gpt-4o"
+                else:
+                    m.execute.return_value = ""
+                return m
+
+            return factory
+
+        fake = MagicMock()
+        for meth in ("select", "secret", "text", "fuzzy", "confirm"):
+            setattr(fake, meth, rec(meth))
+
+        with (
+            patch.object(o, "inquirer", fake),
+            patch.object(
+                o, "_verify_key_and_list_models", return_value=(["openai/gpt-4o"], None)
+            ) as verify,
+            patch.object(o, "_select_provider", return_value=(provider_name, False)),
+            patch.object(o, "WorkspaceManager"),
+            patch.object(o, "save_config"),
+            patch.object(o, "_auto_test_connection", return_value=True),
+            patch.object(o, "_auto_pull_ollama_embedding"),
+            contextlib.suppress(Exception),
+        ):
+            o._run_onboard_wizard()
+        return calls, verify
+
+    def test_openrouter_prompts_for_key_and_verifies(self):
+        calls, verify = self._drive("openrouter")
+        prompts = [msg for _kind, msg in calls]
+        # The key prompt must appear, and verification must run.
+        assert any(kind == "secret" and "API key" in msg for kind, msg in calls), (
+            f"expected an 'API key' prompt; got {prompts}"
+        )
+        assert verify.called, "OpenRouter must verify the key & fetch models"
+        # And it must NOT silently fall through to the no-key base-URL prompt.
+        assert not any("API base URL (Enter to keep default)" in msg for msg in prompts)

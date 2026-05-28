@@ -688,6 +688,7 @@ def _run_onboard_wizard() -> bool:
                 default=default_base,
             ).execute()
             api_base = custom_base.strip() or default_base
+        elif selected_spec and selected_spec.api_key_env:
             while True:
                 console.print(
                     Panel(
