@@ -9,4 +9,4 @@ import logging as _logging
 # here — before any grip submodule pulls litellm in.
 _logging.getLogger("LiteLLM").setLevel(_logging.ERROR)
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
