@@ -167,9 +167,9 @@ class AgentDefaults(BaseModel):
         description="Claude model to use in SDK mode. "
         "Options: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001.",
     )
-    sdk_permission_mode: str = Field(
+    sdk_permission_mode: Literal["default", "acceptEdits", "plan", "bypassPermissions"] = Field(
         default="acceptEdits",
-        description="SDK permission mode: 'acceptEdits', 'bypassPermissions', or 'default'.",
+        description="SDK permission mode: 'default', 'acceptEdits', 'plan', or 'bypassPermissions'.",
     )
     sdk_effort: Literal["low", "medium", "high", "max"] | None = Field(
         default=None,
