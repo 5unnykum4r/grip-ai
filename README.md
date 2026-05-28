@@ -16,21 +16,22 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/badge/engine-Claude%20Agent%20SDK-blueviolet" alt="Claude Agent SDK">
-  <img src="https://img.shields.io/badge/tests-826-brightgreen" alt="826 Tests">
+  <img src="https://img.shields.io/badge/tests-882-brightgreen" alt="882 Tests">
   <img src="https://img.shields.io/badge/tools-31-blue" alt="31 Tools">
   <img src="https://img.shields.io/badge/providers-15-orange" alt="15 LLM Providers">
 </p>
 
 ---
 
-grip is a self-hostable AI agent platform — 120+ Python modules, ~24,000 lines, 826 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, automate with a headless browser, track multi-step tasks, schedule reliable cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
+grip is a self-hostable AI agent platform — 120+ Python modules, ~24,000 lines, 882 tests. It uses the **Claude Agent SDK** as its primary engine for Claude models, with a **LiteLLM fallback** for 15+ other providers (OpenAI, DeepSeek, Groq, Gemini, Ollama local & cloud, etc.). Chat over Telegram/Discord/Slack, automate with a headless browser, track multi-step tasks, schedule reliable cron jobs, orchestrate multi-agent workflows, and expose a secure REST API — all from a single `grip gateway` process.
 
 ## Features
 
 | Category | Details |
 |----------|---------|
-| **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM fallback for non-Claude models |
+| **Dual Engine** | Claude Agent SDK (primary, recommended) + LiteLLM engine for non-Claude models — both expose the **same built-in tool surface** (grip's tools are bridged into the SDK engine as in-process MCP tools) |
 | **LLM Providers** | Anthropic (via SDK), OpenRouter, OpenAI, DeepSeek, Groq, Google Gemini, Qwen, MiniMax, Moonshot (Kimi), Ollama (Cloud), Ollama (Local), vLLM, Llama.cpp, LM Studio, and any OpenAI-compatible API |
+| **Reliability & Cost** | Automatic retries with exponential backoff (`num_retries`), real **cross-provider failover** via `litellm.Router` (`fallback_models` chain), and per-call **USD cost tracking** (LiteLLM `response_cost` → daily totals) |
 | **Built-in Tools** | 31 tools across 16 modules — file read/write/edit/append/list/delete, shell execution, web search (Brave + DuckDuckGo), deep web research, **browser automation (Playwright — navigate, click, fill, screenshot, evaluate JS, extract content)**, document conversion (MarkItDown — PDF/DOCX/PPTX/XLSX/HTML/images), code analysis, data transforms, document generation, email composition, task tracking (todo_write/todo_read), messaging, subagent spawning, finance (stock quotes, history, company info via yfinance), cron scheduling, workflows, MCP tools |
 | **Task Tracking** | `todo_write`/`todo_read` tools with workspace persistence — active tasks injected into every system prompt so the agent never loses track across iterations |
 | **Chat Channels** | Telegram (bot commands, photos, documents with auto-conversion, voice), Discord (attachments with auto-conversion), Slack (Socket Mode, file shares with auto-conversion) |
@@ -109,7 +110,9 @@ grip config set agents.defaults.engine "claude_sdk"
 grip config set agents.defaults.engine "litellm"
 ```
 
-The onboarding wizard (`grip onboard`) automatically sets the right engine based on your provider choice.
+The onboarding wizard (`grip onboard`) automatically sets the right engine based on your provider choice. For cloud providers it now **verifies your API key and fetches the live model list** from the provider before you choose a default model (falling back to a curated list if the provider is unreachable).
+
+Both engines expose the same built-in tools: on the Claude SDK engine, grip's tool registry is bridged in as in-process MCP tools (categories the SDK already covers natively — filesystem, shell, subagents — are skipped; configurable via `sdk_expose_grip_tools` / `sdk_tool_skip_categories`).
 
 ## <a id="installation"></a>Installation
 
@@ -182,6 +185,10 @@ grip agent -m "What files are in my workspace?"
 # Pipe input from stdin
 cat error.log | grip agent -m "Fix this error"
 ```
+
+The chat UI stays clean — routine INFO logs (tool calls, LLM requests, loop
+iterations) are written to `~/.grip/logs/grip.log` rather than the terminal.
+Run `grip -v agent` to surface them on the console for debugging.
 
 Interactive mode supports slash commands:
 
@@ -385,6 +392,31 @@ grip config set agents.model_tiers.high "openrouter/anthropic/claude-sonnet-4"
 ```
 
 Simple queries (greetings, lookups) go to the cheap model. Complex tasks (architecture, debugging) go to the powerful model.
+
+### Reliability: Retries & Cross-Provider Fallback
+
+Every LiteLLM call retries transient failures (timeouts, dropped connections, 5xx) with exponential backoff, and you can configure an ordered fallback chain that fails over to other providers via `litellm.Router` — each fallback carries its own resolved API key (credentials never touch `os.environ`):
+
+```bash
+# Retries per call (default: 2; 0 disables)
+grip config set agents.defaults.num_retries 2
+
+# Ordered cross-provider failover when the primary model fails after its retries
+grip config set agents.defaults.fallback_models '["anthropic/claude-haiku-4-5", "openai/gpt-4o-mini"]'
+```
+
+Local providers and providers without a configured key are skipped from the fallback chain (with a warning) rather than failing the run.
+
+### Cost Tracking
+
+When a daily token cap is set, grip also records the per-call USD cost reported by LiteLLM (`response_cost`) and surfaces a daily total alongside token usage:
+
+```bash
+grip config set agents.defaults.max_daily_tokens 2000000
+grip status   # shows tokens + cost_usd for today
+```
+
+> Note: cost tracking applies to the LiteLLM engine path. The Claude Agent SDK path manages its own token accounting.
 
 ## Task Tracking
 
@@ -816,7 +848,7 @@ uv sync --group dev
 # Run linter
 uv run ruff check grip/ tests/
 
-# Run tests (826 tests across 50+ test files)
+# Run tests (882 tests across 50+ test files)
 uv run pytest
 
 # Run tests with coverage

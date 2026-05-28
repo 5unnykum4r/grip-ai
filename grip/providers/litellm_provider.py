@@ -32,6 +32,9 @@ class LiteLLMProvider(LLMProvider):
 
     _litellm_configured: bool = False
 
+    # Internal alias for the primary deployment inside the Router's model_list.
+    _PRIMARY_ALIAS = "grip-primary"
+
     def __init__(
         self,
         provider_name: str,
@@ -39,13 +42,67 @@ class LiteLLMProvider(LLMProvider):
         api_key: str,
         api_base: str,
         default_model: str,
+        num_retries: int = 2,
+        fallback_deployments: list[dict[str, Any]] | None = None,
     ) -> None:
         self._provider_name = provider_name
         self._model_prefix = model_prefix
         self._api_key = api_key
         self._api_base = api_base
         self._default_model = default_model
+        self._num_retries = num_retries
+        self._fallback_deployments = fallback_deployments or []
+        self._router: Any = self._build_router()
         self._setup_env()
+
+    def _build_router(self) -> Any:
+        """Build a litellm.Router for cross-provider fallback, or None.
+
+        Each deployment carries its own resolved api_key/api_base in
+        ``litellm_params`` (keys live in the model_list, never in os.environ),
+        and an ordered ``fallbacks`` mapping points the primary alias at each
+        fallback in turn. Returns None when no fallback chain is configured,
+        leaving the direct ``litellm.acompletion`` path untouched.
+        """
+        if not self._fallback_deployments:
+            return None
+
+        import litellm
+
+        primary_model = self._default_model
+        if self._model_prefix and not primary_model.startswith(self._model_prefix):
+            primary_model = f"{self._model_prefix}/{primary_model}"
+
+        primary_params: dict[str, Any] = {"model": primary_model}
+        if self._api_key:
+            primary_params["api_key"] = self._api_key
+        if self._api_base:
+            primary_params["api_base"] = self._api_base
+
+        model_list: list[dict[str, Any]] = [
+            {"model_name": self._PRIMARY_ALIAS, "litellm_params": primary_params}
+        ]
+        fallback_aliases: list[str] = []
+        for idx, dep in enumerate(self._fallback_deployments):
+            alias = f"grip-fallback-{idx}"
+            fallback_aliases.append(alias)
+            params: dict[str, Any] = {"model": dep["model"]}
+            if dep.get("api_key"):
+                params["api_key"] = dep["api_key"]
+            if dep.get("api_base"):
+                params["api_base"] = dep["api_base"]
+            model_list.append({"model_name": alias, "litellm_params": params})
+
+        return litellm.Router(
+            model_list=model_list,
+            fallbacks=[{self._PRIMARY_ALIAS: fallback_aliases}],
+            num_retries=self._num_retries,
+        )
+
+    @property
+    def router(self) -> Any:
+        """Return the configured litellm.Router, or None when no fallback chain is set."""
+        return self._router
 
     def _setup_env(self) -> None:
         """Prepare authentication for LiteLLM.
@@ -96,18 +153,35 @@ class LiteLLMProvider(LLMProvider):
 
         tool_count = len(tools) if tools else 0
         logger.info(
-            "LiteLLM call: model={}, messages={}, tools={}",
+            "LiteLLM call: model={}, messages={}, tools={}, fallbacks={}",
             resolved_model,
             len(messages),
             tool_count,
+            len(self._fallback_deployments),
         )
 
         try:
-            response = await litellm.acompletion(**kwargs)
+            if self._router is not None:
+                response = await self._router.acompletion(**self._router_kwargs(kwargs))
+            else:
+                response = await litellm.acompletion(num_retries=self._num_retries, **kwargs)
         except Exception as exc:
             self._raise_provider_error(exc, resolved_model)
 
         return self._parse_response(response)
+
+    def _router_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Adapt direct-call kwargs for Router use.
+
+        The Router resolves the model and credentials from its ``model_list``,
+        so the per-call api_key/api_base are dropped and the model is replaced
+        with the primary alias.
+        """
+        router_kwargs = dict(kwargs)
+        router_kwargs.pop("api_key", None)
+        router_kwargs.pop("api_base", None)
+        router_kwargs["model"] = self._PRIMARY_ALIAS
+        return router_kwargs
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Convert a LiteLLM ModelResponse into our LLMResponse."""
@@ -264,14 +338,18 @@ class LiteLLMProvider(LLMProvider):
 
         tool_count = len(tools) if tools else 0
         logger.info(
-            "LiteLLM stream call: model={}, messages={}, tools={}",
+            "LiteLLM stream call: model={}, messages={}, tools={}, fallbacks={}",
             resolved_model,
             len(messages),
             tool_count,
+            len(self._fallback_deployments),
         )
 
         try:
-            response = await litellm.acompletion(**kwargs)
+            if self._router is not None:
+                response = await self._router.acompletion(**self._router_kwargs(kwargs))
+            else:
+                response = await litellm.acompletion(num_retries=self._num_retries, **kwargs)
         except Exception as exc:
             self._raise_provider_error(exc, resolved_model)
 

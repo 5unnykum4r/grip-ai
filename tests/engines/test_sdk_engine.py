@@ -272,6 +272,67 @@ class TestSDKRunnerIsEngineProtocol:
 # ---------------------------------------------------------------------------
 
 
+class TestRegistryToolBridge:
+    """SDKRunner bridges grip's tool registry into the SDK engine (Fix #2)."""
+
+    def test_exposes_grip_unique_tools_by_default(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        names = [t.name for t in runner._custom_tools]
+        # General / document / finance category tools have no SDK-native equivalent.
+        assert "code_analysis" in names
+        assert "web_research" in names
+
+    def test_skips_categories_covered_by_sdk_natives(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        names = [t.name for t in runner._custom_tools]
+        assert "read_file" not in names  # filesystem -> SDK Read/Write/Edit
+        assert "exec" not in names  # shell -> SDK Bash
+        assert "spawn" not in names  # orchestration -> SDK subagents
+
+    def test_no_duplicate_tool_names(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        names = [t.name for t in runner._custom_tools]
+        # The dedicated stock_quote tool must not collide with the registry's.
+        assert len(names) == len(set(names))
+
+    @pytest.mark.asyncio
+    async def test_bridged_tool_routes_to_registry(
+        self, config, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        runner = _build_runner(config, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        bridged = _find_tool(runner._custom_tools, "code_analysis")
+        result = await bridged.handler({})
+        # Every bridge handler returns the MCP text-result envelope.
+        assert "content" in result
+        assert result["content"][0]["type"] == "text"
+
+    def test_bridge_disabled_by_config(
+        self, tmp_workspace, mock_workspace, mock_session_mgr, mock_memory_mgr
+    ):
+        cfg = GripConfig(
+            agents={
+                "defaults": {
+                    "workspace": str(tmp_workspace),
+                    "semantic_cache_enabled": False,
+                    "sdk_expose_grip_tools": False,
+                }
+            },
+            tools={"restrict_to_workspace": True},
+            providers={"anthropic": {"api_key": "test-key-12345"}},
+        )
+        runner = _build_runner(cfg, mock_workspace, mock_session_mgr, mock_memory_mgr)
+        names = [t.name for t in runner._custom_tools]
+        assert "code_analysis" not in names
+        # Dedicated tools remain regardless of the bridge toggle.
+        assert "send_message" in names
+
+
 class TestSDKRunnerConstructor:
     """Constructor should set up all fields correctly."""
 

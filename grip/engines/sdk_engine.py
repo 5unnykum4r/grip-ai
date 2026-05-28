@@ -88,6 +88,10 @@ class SDKRunner(EngineProtocol):
         # Pre-build static artifacts once (MCP config and custom tools don't
         # change after construction).
         self._custom_tools: list = self._build_custom_tools()
+        # Bridge grip's built-in tool registry into the SDK so both engines
+        # share one tool surface (Fix #2). Skipped categories (filesystem,
+        # shell, etc.) are covered by Claude Code's native tools.
+        self._custom_tools.extend(self._build_registry_bridge_tools(self._custom_tools))
         self._mcp_config: list[dict[str, Any]] = self._build_mcp_config()
         self._allowed_tools_base: list[str] = self._collect_allowed_tools()
         self._skills_cache: list = self._load_skills()
@@ -333,6 +337,64 @@ class SDKRunner(EngineProtocol):
             pass
 
         return tools
+
+    def _build_registry_bridge_tools(self, dedicated: list) -> list:
+        """Wrap grip's built-in tool registry as in-process SDK MCP tools.
+
+        Each registry Tool becomes an ``@tool``-decorated callable that routes to
+        ``ToolRegistry.execute()``, so the SDK engine exposes the same tools as the
+        LiteLLM engine. Two classes of tools are excluded:
+
+        * categories in ``sdk_tool_skip_categories`` (filesystem, shell, etc.),
+          which Claude Code already provides natively; and
+        * names already claimed by a dedicated SDK tool (e.g. ``stock_quote``),
+          to avoid duplicate registrations.
+
+        Returns an empty list when ``sdk_expose_grip_tools`` is disabled.
+        """
+        if not self._config.agents.defaults.sdk_expose_grip_tools:
+            return []
+
+        from grip.tools import create_default_registry
+        from grip.tools.base import ToolContext
+
+        registry = create_default_registry(mcp_servers=self._mcp_servers)
+        self._bridge_registry = registry  # keep a reference alive for the closures
+
+        skip_categories = set(self._config.agents.defaults.sdk_tool_skip_categories)
+        dedicated_names = {getattr(t, "name", None) for t in dedicated}
+
+        ctx = ToolContext(
+            workspace_path=self._workspace.root,
+            restrict_to_workspace=getattr(self._config.tools, "restrict_to_workspace", False),
+        )
+
+        bridged: list = []
+        for name in registry.names():
+            tool_obj = registry.get(name)
+            if tool_obj is None or tool_obj.category in skip_categories:
+                continue
+            if name in dedicated_names:
+                continue
+            bridged.append(self._make_bridge_tool(registry, tool_obj, ctx))
+
+        logger.debug("Bridged {} grip registry tools into the SDK engine.", len(bridged))
+        return bridged
+
+    def _make_bridge_tool(self, registry: Any, tool_obj: Any, ctx: Any):
+        """Build a single ``@tool``-decorated SDK wrapper around a registry tool.
+
+        Defined in its own method so each closure binds its own ``name`` and
+        ``tool_obj`` rather than the last value of a loop variable.
+        """
+        name = tool_obj.name
+
+        @tool(name, tool_obj.description, tool_obj.parameters)
+        async def _bridge(args: dict[str, Any]) -> dict[str, Any]:
+            result = await registry.execute(name, args, ctx)
+            return self._text_result(result)
+
+        return _bridge
 
     # -- EngineProtocol implementation --
 

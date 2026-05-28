@@ -176,6 +176,29 @@ class AgentDefaults(BaseModel):
         description="Adaptive thinking effort: 'low', 'medium', 'high', or 'max' (Opus 4.6 only). "
         "Enables adaptive thinking via --effort CLI flag. None = model default.",
     )
+    num_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Retries per LiteLLM call on transient errors (timeouts, dropped "
+        "connections, 5xx). LiteLLM applies exponential backoff. 0 disables retries.",
+    )
+    fallback_models: list[str] = Field(
+        default_factory=list,
+        description="Ordered fallback model chain (provider/model strings) tried when the "
+        "primary model fails after its retries. Enables cross-provider failover via "
+        "litellm.Router. Empty = no fallback.",
+    )
+    sdk_expose_grip_tools: bool = Field(
+        default=True,
+        description="Expose grip's built-in tool registry to the Claude Agent SDK engine as "
+        "in-process MCP tools, so both engines share the same tool surface.",
+    )
+    sdk_tool_skip_categories: list[str] = Field(
+        default_factory=lambda: ["filesystem", "shell", "messaging", "orchestration"],
+        description="Tool categories NOT bridged to the SDK engine because Claude Code already "
+        "provides native equivalents (Read/Write/Edit, Bash, subagents) or grip provides "
+        "dedicated SDK tools (send_message/send_file).",
+    )
 
 
 class ModelTiersConfig(BaseModel):

@@ -149,6 +149,101 @@ class TestCreateProvider:
         provider = create_provider(config)
         assert "Ollama" in provider.name
 
+    def test_ollama_local_has_http_base(self):
+        """Regression for #7: Ollama (Local) must have a usable http:// base URL."""
+        spec = ProviderRegistry.get_spec("ollama")
+        assert spec.api_base.startswith("http://")
+        assert "11434" in spec.api_base
+
+    def test_lmstudio_local_has_http_base(self):
+        spec = ProviderRegistry.get_spec("lmstudio")
+        assert spec.api_base.startswith("http://")
+
+    def test_ollama_no_entry_uses_spec_base(self):
+        """#7: with no provider entry, ollama still gets a non-empty base URL."""
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(model="qwen2.5-coder:7b", provider="ollama")
+            ),
+        )
+        provider = create_provider(config)
+        assert provider._api_base.startswith("http://")
+
+    def test_ollama_empty_configured_base_falls_back(self):
+        """#7: even an explicitly blank api_base must not produce a scheme-less URL."""
+        config = GripConfig(
+            agents=AgentsConfig(defaults=AgentDefaults(model="qwen2.5", provider="ollama")),
+            providers={"ollama": ProviderEntry(api_base="")},
+        )
+        provider = create_provider(config)
+        assert provider._api_base.startswith("http://"), (
+            "empty base should fall back to localhost, not crash httpx with UnsupportedProtocol"
+        )
+
+    def test_fallback_skips_model_without_key(self):
+        """A fallback whose provider has no configured key is dropped, not sent unauthenticated."""
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    model="anthropic/claude-sonnet-4-6",
+                    fallback_models=["openai/gpt-4o-mini"],  # no openai key below
+                ),
+            ),
+            providers={"anthropic": ProviderEntry(api_key="ak")},
+        )
+        provider = create_provider(config)
+        assert provider._fallback_deployments == []
+        assert provider.router is None  # no usable fallbacks → no Router
+
+    def test_fallback_skips_local_provider(self):
+        """Local providers aren't reliably routable via litellm.Router, so they're
+        skipped (with a warning) rather than crashing Router construction."""
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    model="anthropic/claude-sonnet-4-6",
+                    fallback_models=["ollama/llama3.2"],
+                ),
+            ),
+            providers={"anthropic": ProviderEntry(api_key="ak")},
+        )
+        provider = create_provider(config)  # must not raise
+        assert provider._fallback_deployments == []
+        assert provider.router is None
+
+    def test_num_retries_forwarded_to_provider(self):
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(model="openai/gpt-4o", num_retries=4),
+            ),
+            providers={"openai": ProviderEntry(api_key="test-key")},
+        )
+        provider = create_provider(config)
+        assert provider._num_retries == 4
+
+    def test_fallback_models_build_router_deployments(self):
+        config = GripConfig(
+            agents=AgentsConfig(
+                defaults=AgentDefaults(
+                    model="anthropic/claude-sonnet-4-6",
+                    fallback_models=["openai/gpt-4o-mini", "groq/llama-3.3-70b-versatile"],
+                ),
+            ),
+            providers={
+                "anthropic": ProviderEntry(api_key="ak"),
+                "openai": ProviderEntry(api_key="ok"),
+                "groq": ProviderEntry(api_key="gk"),
+            },
+        )
+        provider = create_provider(config)
+        # Two fallback deployments are built and the Router is active.
+        assert len(provider._fallback_deployments) == 2
+        assert provider.router is not None
+        # Each deployment carries a routable model string and its own key.
+        models = [d["model"] for d in provider._fallback_deployments]
+        assert "openai/gpt-4o-mini" in models
+        assert provider._fallback_deployments[0]["api_key"] == "ok"
+
 
 class TestAgentDefaultsProvider:
     """Test the provider field on AgentDefaults."""
