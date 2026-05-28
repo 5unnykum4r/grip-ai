@@ -93,11 +93,13 @@ class MCPConnection:
         self.server_name = server_name
         self._config = config
         self._force_oauth = force_oauth
-        self._session = None
-        self._transport_cm = None
-        self._read_stream = None
-        self._write_stream = None
-        self._process = None
+        # Transport plumbing from the lazily-imported `mcp` package; the precise
+        # session/stream types are internal to that library, so they're typed Any.
+        self._session: Any = None
+        self._transport_cm: Any = None
+        self._read_stream: Any = None
+        self._write_stream: Any = None
+        self._process: Any = None
         self._tools: list[MCPWrappedTool] = []
         self._connected: bool = False
         self._error: str = ""

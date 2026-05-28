@@ -1,4 +1,6 @@
 import contextlib
+from collections.abc import Callable
+from typing import Any
 
 from loguru import logger
 
@@ -47,7 +49,7 @@ def create_default_registry(
     *,
     workspace_path: str | None = None,
     subagent_manager: SubagentManager | None = None,
-    message_callback: object | None = None,
+    message_callback: Callable[[str, str], Any] | None = None,
     mcp_servers: dict | None = None,
 ) -> ToolRegistry:
     """Build a ToolRegistry pre-loaded with all built-in tools."""

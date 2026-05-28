@@ -70,7 +70,9 @@ def build_pre_tool_use_hook(
 
         return {}
 
-    return [HookMatcher(hooks=[pre_tool_use])]
+    # The SDK's hook callable type is a broad HookInput union; our handlers use a
+    # permissive (input, tool_use_id, context) signature by design.
+    return [HookMatcher(hooks=[pre_tool_use])]  # type: ignore[list-item]
 
 
 def build_post_tool_use_hook() -> list[HookMatcher]:
@@ -82,7 +84,7 @@ def build_post_tool_use_hook() -> list[HookMatcher]:
         logger.debug("SDK tool executed: {} -> {} chars output", tool_name, len(str(tool_response)))
         return {}
 
-    return [HookMatcher(hooks=[post_tool_use])]
+    return [HookMatcher(hooks=[post_tool_use])]  # type: ignore[list-item]
 
 
 def build_stop_hook(memory_mgr: MemoryManager | None) -> list[HookMatcher]:
@@ -96,4 +98,4 @@ def build_stop_hook(memory_mgr: MemoryManager | None) -> list[HookMatcher]:
                 logger.debug("Stop hook: saved session end marker to history")
         return {}
 
-    return [HookMatcher(hooks=[stop_hook])]
+    return [HookMatcher(hooks=[stop_hook])]  # type: ignore[list-item]

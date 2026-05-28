@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import html
 import re
+from typing import Any
 
 from loguru import logger
 
@@ -110,7 +111,8 @@ class TelegramChannel(BaseChannel):
 
     def __init__(self, config: ChannelEntry) -> None:
         super().__init__(config)
-        self._app = None
+        # python-telegram-bot Application handle (deeply generic type); set in start().
+        self._app: Any = None
 
     @property
     def name(self) -> str:
@@ -271,6 +273,8 @@ class TelegramChannel(BaseChannel):
                 return
             ids = _check_user(update)
             if ids is None:
+                return
+            if update.message is None:
                 return
             text = (update.message.text or "").strip()
             trust_path = text.split(maxsplit=1)[1] if " " in text else ""

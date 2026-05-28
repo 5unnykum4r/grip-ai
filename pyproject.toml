@@ -105,3 +105,25 @@ known-first-party = ["grip"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+
+# Optional / untyped third-party dependencies (extras not installed in the
+# type-check env, or libraries that ship no type stubs). Suppress missing-import
+# noise for these rather than scattering per-line ignores.
+[[tool.mypy.overrides]]
+module = [
+    "playwright.*",
+    "markitdown.*",
+    "slack_sdk.*",
+    "opentelemetry.*",
+    "yfinance.*",
+    "yaml",
+    "croniter",
+    "discord",
+    "discord.*",
+    "mcp",
+    "mcp.*",
+]
+ignore_missing_imports = true

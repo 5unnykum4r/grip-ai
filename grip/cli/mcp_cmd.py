@@ -250,11 +250,11 @@ def mcp_presets(
         table.add_column("Name", style="cyan")
         table.add_column("Command/URL", style="green")
 
-        for name, config in MCP_PRESETS.items():
-            if "url" in config:
-                detail = config["url"]
+        for name, preset in MCP_PRESETS.items():
+            if "url" in preset:
+                detail = preset["url"]
             else:
-                detail = f"{config['command']} {' '.join(config.get('args', []))}"
+                detail = f"{preset['command']} {' '.join(preset.get('args', []))}"
             table.add_row(name, detail)
 
         console.print(table)

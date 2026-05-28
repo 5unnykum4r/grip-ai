@@ -633,6 +633,7 @@ def _run_onboard_wizard() -> bool:
                 continue
             break
 
+        bare_model = ""
         while True:
             bare_model = inquirer.text(
                 message="Enter model name:",

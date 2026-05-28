@@ -76,7 +76,10 @@ class StockQuoteTool(Tool):
         lines: list[str] = []
         for symbol in symbols:
             try:
-                info = await asyncio.to_thread(lambda s=symbol: yf.Ticker(s).info)
+                def _fetch_info(sym: str = symbol) -> Any:
+                    return yf.Ticker(sym).info
+
+                info = await asyncio.to_thread(_fetch_info)
                 if not info or (
                     info.get("regularMarketPrice") is None and info.get("currentPrice") is None
                 ):

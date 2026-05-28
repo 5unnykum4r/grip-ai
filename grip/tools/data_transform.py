@@ -80,7 +80,7 @@ def _apply_filter(data: list[dict[str, Any]], filter_spec: dict[str, Any]) -> li
     """Filter rows based on column, operator, and value."""
     column = filter_spec.get("column", "")
     op = filter_spec.get("op", "==")
-    value = filter_spec.get("value")
+    value: Any = filter_spec.get("value")
 
     if not column:
         return data
