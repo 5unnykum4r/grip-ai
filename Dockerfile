@@ -5,9 +5,11 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
-COPY grip/ grip/
+RUN uv sync --frozen --no-dev --no-install-project
 
-RUN uv sync --no-dev
+COPY README.md ./
+COPY grip/ grip/
+RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim
 
@@ -16,7 +18,7 @@ WORKDIR /app
 # Install Node.js (required by Claude Agent SDK for the underlying CLI)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs npm \
-    && npm install -g @anthropic-ai/claude-code \
+    && npm install -g @anthropic-ai/claude-code@2.1.49 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=base /app /app
